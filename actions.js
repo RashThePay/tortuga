@@ -73,12 +73,12 @@ async function startGame(ctx) {
   lines.push(`*${LOCATION_NAMES.flyingDutchman}:*`);
   for (let i = 0; i < game.locations.flyingDutchman.crew.length; i++) {
     const p = game.players.get(game.locations.flyingDutchman.crew[i]);
-    lines.push(`  ${i + 1}. ${p.name}`);
+    lines.push(`  ${(i + 1).toLocaleString("fa-IR")}. ‏${p.name}`);
   }
   lines.push(`\n*${LOCATION_NAMES.jollyRoger}:*`);
   for (let i = 0; i < game.locations.jollyRoger.crew.length; i++) {
     const p = game.players.get(game.locations.jollyRoger.crew[i]);
-    lines.push(`  ${i + 1}. ${p.name}`);
+    lines.push(`  ${(i + 1).toLocaleString("fa-IR")}. ‏${p.name}`);
   }
 
   await ctx.reply(msg.gameStarted(lines.join('\n')), { parse_mode: 'Markdown' });
