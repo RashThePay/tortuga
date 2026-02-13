@@ -43,9 +43,14 @@ bot.catch((err) => {
   console.error('Bot error:', err);
 });
 
-bot.launch(() => {
-  console.log('🏴‍☠️ Tortuga bot is running!');
-});
+// Export for Vercel webhook usage
+module.exports = bot;
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+// Local polling mode: run directly with `node bot.js`
+if (require.main === module) {
+  bot.launch(() => {
+    console.log('🏴‍☠️ Tortuga bot is running (polling)!');
+  });
+  process.once('SIGINT', () => bot.stop('SIGINT'));
+  process.once('SIGTERM', () => bot.stop('SIGTERM'));
+}
