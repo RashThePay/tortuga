@@ -31,9 +31,17 @@ async function join(ctx) {
 
   const user = ctx.from;
   const name = user.first_name + (user.last_name ? ' ' + user.last_name : '');
-  if (!game.addLobbyPlayer(user.id, name)) {
+  if (game.lobbyPlayers.find((p) => p.id === user.id)) {
     return ctx.reply(msg.alreadyJoined);
   }
+
+  // Verify bot can DM this player
+  const canDM = await sendDM(ctx, user.id, msg.dmCheckOk);
+  if (!canDM) {
+    return ctx.reply(msg.dmRequired(name));
+  }
+
+  game.addLobbyPlayer(user.id, name);
   return ctx.reply(msg.joined(name));
 }
 
