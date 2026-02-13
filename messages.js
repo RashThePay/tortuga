@@ -18,7 +18,7 @@ const SHIP_SHORT = {
 };
 
 function playerName(p) {
-  return `[${p.name}](tg://user?id=${p.id})`;
+  return `[‏${p.name}](tg://user?id=${p.id})`;
 }
 
 function shipLabel(loc) {
@@ -220,12 +220,12 @@ function formatShipStatus(state, shipKey) {
     if (i === loc.crew.length - 1 && loc.crew.length > 1) role = ' (پادو)';
     if (loc.crew.length === 2 && i === 1) role = ' (معاون/پادو)';
     if (loc.crew.length === 1 && i === 0) role = ' (ناخدا/پادو)';
-    return `  ${(i + 1).toLocaleString("fa-IR")}. ${p.name}${role}`;
+    return `  ${(i + 1).toLocaleString("fa-IR")}. ‏${p.name}${role}`;
   });
   return (
     crewNames.join('\n') +
     (crewNames.length === 0 ? '  خالی' : '') +
-    `\n  💰 انگلیسی: ${loc.holds.english} | فرانسوی: ${loc.holds.french}`
+    `\n  💰 انگلیسی: ${loc.holds.english.toLocaleString("fa-IR")} | فرانسوی: ${loc.holds.french.toLocaleString("fa-IR")}`
   );
 }
 
@@ -234,7 +234,7 @@ function formatIslandStatus(state) {
   const resNames = loc.residents.map((id, i) => {
     const p = state.players.get(id);
     let role = i === 0 ? ' (حاکم)' : '';
-    return `  ${(i + 1).toLocaleString("fa-IR")}. ${p.name}${role}`;
+    return `  ${(i + 1).toLocaleString("fa-IR")}. ‏${p.name}${role}`;
   });
   return (
     (resNames.length > 0 ? resNames.join('\n') : '  خالی') +

@@ -212,7 +212,7 @@ async function advanceRound(ctx, game) {
 }
 
 async function sendDayStart(ctx, game) {
-  await ctx.telegram.sendMessage(
+  const gameStateMessage = await ctx.telegram.sendMessage(
     game.chatId,
     msg.status(game),
     { parse_mode: 'Markdown' }
@@ -222,6 +222,9 @@ async function sendDayStart(ctx, game) {
     msg.dayStart(game.round),
     { parse_mode: 'Markdown' }
   );
+  try {
+    await ctx.telegram.pinChatMessage(game.chatId, gameStateMessage.message_id)
+  } catch {}
 }
 
 async function endGame(ctx, game) {
