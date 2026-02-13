@@ -3,11 +3,13 @@ const { findGameByPlayer, getGame, deleteGame } = require('./game');
 const { msg, shipLabel, TEAM_NAMES } = require('./messages');
 const { sendDM } = require('./actions');
 
-// /endday - transition from day to night
-async function endDay(ctx) {
-  const game = getGame(ctx.chat.id);
-  if (!game) return ctx.reply(msg.noGame);
-  if (game.phase !== 'day') return ctx.reply(msg.gameNotDay);
+// Transition from day to night (called automatically when all players are done)
+async function endDay(ctx, game) {
+  if (!game) {
+    game = getGame(ctx.chat.id);
+    if (!game) return;
+  }
+  if (game.phase !== 'day') return;
 
   if (game.pendingEvents.length === 0) {
     // No events, skip night

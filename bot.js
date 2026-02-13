@@ -25,10 +25,8 @@ bot.command('mutiny', (ctx) => actions.mutiny(ctx));
 bot.command('move', (ctx) => actions.moveTreasure(ctx));
 bot.command('callarmada', (ctx) => actions.callArmada(ctx));
 bot.command('dispute', (ctx) => actions.dispute(ctx));
+bot.command('pass', (ctx) => actions.pass(ctx));
 bot.command('status', (ctx) => actions.status(ctx));
-
-// Night transition
-bot.command('endday', (ctx) => votes.endDay(ctx));
 
 // Callback queries (inline keyboard presses)
 bot.on('callback_query', async (ctx) => {

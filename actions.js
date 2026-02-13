@@ -2,6 +2,13 @@ const { Markup } = require('telegraf');
 const { getGame, createGame, findGameByPlayer } = require('./game');
 const { msg, SHIP_SHORT, shipLabel, LOCATION_NAMES, TEAM_NAMES } = require('./messages');
 
+// Lazy require to avoid circular dependency
+let _votes;
+function getVotes() {
+  if (!_votes) _votes = require('./votes');
+  return _votes;
+}
+
 async function sendDM(ctx, userId, text, extra) {
   try {
     await ctx.telegram.sendMessage(userId, text, { parse_mode: 'Markdown', ...extra });
@@ -9,6 +16,13 @@ async function sendDM(ctx, userId, text, extra) {
   } catch {
     return false;
   }
+}
+
+// Check if day should end after an action, and trigger night if so
+async function checkDayEnd(ctx, game) {
+  if (game.phase !== 'day') return;
+  if (!game.allPlayersDone()) return;
+  await getVotes().endDay(ctx, game);
 }
 
 // /newgame
@@ -107,8 +121,9 @@ async function board(ctx) {
   if (game.isOnRowboat(userId)) return ctx.reply(msg.alreadyOnRowboat);
 
   game.boardRowboat(userId);
-  game.usedAction.add(userId);
-  return ctx.reply(msg.boardedRowboat(p.name));
+  game.markAction(userId);
+  await ctx.reply(msg.boardedRowboat(p.name));
+  await checkDayEnd(ctx, game);
 }
 
 // /disembark - show inline keyboard to choose destination
@@ -166,8 +181,9 @@ async function attack(ctx) {
   }
 
   game.addPendingEvent({ type: 'attack', ship, initiator: userId, target });
-  game.usedAction.add(userId);
-  return ctx.reply(msg.attackOrdered(p.name, ship));
+  game.markAction(userId);
+  await ctx.reply(msg.attackOrdered(p.name, ship));
+  await checkDayEnd(ctx, game);
 }
 
 // /maroon - show inline keyboard to choose crew member
@@ -218,8 +234,9 @@ async function mutiny(ctx) {
   }
 
   game.addPendingEvent({ type: 'mutiny', ship, initiator: userId });
-  game.usedAction.add(userId);
-  return ctx.reply(msg.mutinyStarted(p.name, ship));
+  game.markAction(userId);
+  await ctx.reply(msg.mutinyStarted(p.name, ship));
+  await checkDayEnd(ctx, game);
 }
 
 // /move - show inline keyboard to choose target hold
@@ -267,8 +284,9 @@ async function callArmada(ctx) {
   if (game.round < 6) return ctx.reply(msg.tooEarlyForArmada);
 
   game.armadaCalled = true;
-  game.usedAction.add(userId);
-  return ctx.reply(msg.armadaCalled(p.name));
+  game.markAction(userId);
+  await ctx.reply(msg.armadaCalled(p.name));
+  await checkDayEnd(ctx, game);
 }
 
 // /dispute - island resident starts dispute
@@ -291,8 +309,25 @@ async function dispute(ctx) {
 
   game.addPendingEvent({ type: 'dispute', initiator: userId });
   game.disputeThisRound = true;
-  game.usedAction.add(userId);
-  return ctx.reply(msg.disputeStarted(p.name));
+  game.markAction(userId);
+  await ctx.reply(msg.disputeStarted(p.name));
+  await checkDayEnd(ctx, game);
+}
+
+// /pass - pass action (can be overridden by a real action later)
+async function pass(ctx) {
+  const game = getGame(ctx.chat.id);
+  if (!game) return ctx.reply(msg.noGame);
+  if (game.phase !== 'day') return ctx.reply(msg.gameNotDay);
+
+  const userId = ctx.from.id;
+  const p = game.players.get(userId);
+  if (!p) return ctx.reply(msg.notInGame);
+  if (game.usedAction.has(userId)) return ctx.reply(msg.alreadyActed);
+
+  game.passAction(userId);
+  await ctx.reply(msg.passed(p.name));
+  await checkDayEnd(ctx, game);
 }
 
 // /status - show game status
@@ -338,7 +373,7 @@ async function handleActionCallback(ctx) {
       await ctx.answerCbQuery(msg.locationFull(dest));
       return;
     }
-    game.usedAction.add(userId);
+    game.markAction(userId);
     await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();
     await ctx.telegram.sendMessage(chatId, msg.disembarked(p.name, dest));
@@ -354,7 +389,7 @@ async function handleActionCallback(ctx) {
     }
     holds[sourceHold]--;
     holds[targetHold]++;
-    game.usedAction.add(userId);
+    game.markAction(userId);
     await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();
     await ctx.telegram.sendMessage(chatId, msg.treasureMoved(p.name, ship, targetHold));
@@ -369,15 +404,17 @@ async function handleActionCallback(ctx) {
     }
     const target = game.players.get(targetId);
     game.sendToIsland(targetId);
-    game.usedAction.add(userId);
+    game.markAction(userId);
     await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();
     await ctx.telegram.sendMessage(chatId, msg.maroonPlayer(p.name, target.name, ship));
   }
+
+  await checkDayEnd(ctx, game);
 }
 
 module.exports = {
   newGame, join, startGame, board, disembark, attack, maroon,
-  mutiny, moveTreasure, callArmada, dispute, status, sendDM,
-  handleActionCallback,
+  mutiny, moveTreasure, callArmada, dispute, pass, status, sendDM,
+  handleActionCallback, checkDayEnd,
 };

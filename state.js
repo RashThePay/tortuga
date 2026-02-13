@@ -16,6 +16,7 @@ class GameState {
     this.votes = new Map(); // eventIndex -> Map<userId, vote>
     this.expectedVoters = new Map(); // eventIndex -> Set<userId>
     this.usedAction = new Set();
+    this.passedAction = new Set();
     this.armadaCalled = false;
     this.disputeThisRound = false;
     this.setupPending = new Set(); // captains who still need to place initial treasure
@@ -86,10 +87,27 @@ class GameState {
   startDay() {
     this.phase = 'day';
     this.usedAction.clear();
+    this.passedAction.clear();
     this.pendingEvents = [];
     this.votes.clear();
     this.expectedVoters.clear();
     this.disputeThisRound = false;
+  }
+
+  markAction(userId) {
+    this.usedAction.add(userId);
+    this.passedAction.delete(userId);
+  }
+
+  passAction(userId) {
+    this.passedAction.add(userId);
+  }
+
+  allPlayersDone() {
+    for (const [id] of this.players) {
+      if (!this.usedAction.has(id) && !this.passedAction.has(id)) return false;
+    }
+    return true;
   }
 
   getPlayerShip(userId) {
@@ -315,10 +333,10 @@ class GameState {
     }
 
     // If solo voter, add random vote
-    if (expected.size === 1) {
-      if (Math.random() < 0.5) engVotes++;
-      else frVotes++;
-    }
+    // if (expected.size === 1) {
+    //   if (Math.random() < 0.5) engVotes++;
+    //   else frVotes++;
+    // }
 
     if (engVotes > frVotes) {
       this.locations.island.treasures = { english: 2, french: 0 };
