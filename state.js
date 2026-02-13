@@ -213,11 +213,20 @@ class GameState {
       const ev = this.pendingEvents[i];
       const voters = new Set();
       if (ev.type === 'attack') {
-        for (const id of this.locations[ev.ship].crew) voters.add(id);
+        const crew = this.locations[ev.ship].crew;
+        if (crew.length < 2) {
+          ev.cancelled = true;
+        } else {
+          for (const id of crew) voters.add(id);
+        }
       } else if (ev.type === 'mutiny') {
-        const captain = this.locations[ev.ship].crew[0];
-        for (const id of this.locations[ev.ship].crew) {
-          if (id !== captain) voters.add(id);
+        const crew = this.locations[ev.ship].crew;
+        const captain = crew[0];
+        const nonCaptainCrew = crew.filter(id => id !== captain);
+        if (nonCaptainCrew.length < 2) {
+          ev.cancelled = true;
+        } else {
+          for (const id of nonCaptainCrew) voters.add(id);
         }
       } else if (ev.type === 'dispute') {
         for (const id of this.locations.island.residents) voters.add(id);
@@ -252,7 +261,6 @@ class GameState {
   resolveAttack(eventIndex) {
     const ev = this.pendingEvents[eventIndex];
     const voteMap = this.votes.get(eventIndex);
-    const expected = this.expectedVoters.get(eventIndex);
 
     let charges = 0, fires = 0, waters = 0;
     for (const v of voteMap.values()) {
@@ -261,16 +269,8 @@ class GameState {
       else if (v === 'water') waters++;
     }
 
-    // If solo voter, add random vote
-    if (expected.size === 1) {
-      const rand = ['charge', 'fire', 'water'][Math.floor(Math.random() * 3)];
-      if (rand === 'charge') charges++;
-      else if (rand === 'fire') fires++;
-      else waters++;
-    }
-
     const success = charges >= 1 && fires > waters;
-    return { success, charges, fires, waters, ship: ev.ship, target: ev.target };
+    return { success, charges, fires, waters, ship: ev.ship, target: ev.target, initiator: ev.initiator };
   }
 
   applyAttackSuccess(ship, hold) {
@@ -282,16 +282,12 @@ class GameState {
         this.locations[ship].holds[hold]++;
       }
     } else {
-      // Attacking the other pirate ship
+      // Attacking the other pirate ship - use stealFrom chosen at attack time
       const otherShip = target;
       const otherHolds = this.locations[otherShip].holds;
-      if (otherHolds.english + otherHolds.french > 0) {
-        // Take from whichever hold has treasure (attacker's captain decides where to put it)
-        if (otherHolds.english > 0) {
-          otherHolds.english--;
-        } else {
-          otherHolds.french--;
-        }
+      const stealFrom = ev?.stealFrom || (otherHolds.english > 0 ? 'english' : 'french');
+      if (otherHolds[stealFrom] > 0) {
+        otherHolds[stealFrom]--;
         this.locations[ship].holds[hold]++;
       }
     }
@@ -300,7 +296,6 @@ class GameState {
   resolveMutiny(eventIndex) {
     const ev = this.pendingEvents[eventIndex];
     const voteMap = this.votes.get(eventIndex);
-    const expected = this.expectedVoters.get(eventIndex);
 
     let forV = 0, against = 0;
     for (const v of voteMap.values()) {
@@ -308,18 +303,15 @@ class GameState {
       else against++;
     }
 
-    // If solo voter, add random vote
-    if (expected.size === 1) {
-      if (Math.random() < 0.5) forV++;
-      else against++;
-    }
-
     const success = forV > against;
     if (success) {
       const captain = this.locations[ev.ship].crew[0];
       this.sendToIsland(captain);
+    } else {
+      // Failed mutiny: first mate (initiator) sent to island
+      this.sendToIsland(ev.initiator);
     }
-    return { success, forV, against, ship: ev.ship };
+    return { success, forV, against, ship: ev.ship, initiator: ev.initiator };
   }
 
   resolveDispute(eventIndex) {

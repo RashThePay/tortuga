@@ -23,6 +23,8 @@ async function endDay(ctx, game) {
   // Send DMs with vote keyboards
   for (let i = 0; i < game.pendingEvents.length; i++) {
     const ev = game.pendingEvents[i];
+    if (ev.cancelled) continue;
+
     const voters = game.expectedVoters.get(i);
 
     let text, keyboard;
@@ -50,6 +52,11 @@ async function endDay(ctx, game) {
     for (const voterId of voters) {
       await sendDM(ctx, voterId, text, keyboard);
     }
+  }
+
+  // If all events were cancelled, resolve immediately
+  if (game.allVotingComplete()) {
+    await resolveAllEvents(ctx, game);
   }
 }
 
@@ -123,6 +130,15 @@ async function resolveAllEvents(ctx, game) {
   for (let i = 0; i < game.pendingEvents.length; i++) {
     const ev = game.pendingEvents[i];
 
+    if (ev.cancelled) {
+      if (ev.type === 'attack') {
+        await ctx.telegram.sendMessage(chatId, msg.attackCancelled(ev.ship), { parse_mode: 'Markdown' });
+      } else if (ev.type === 'mutiny') {
+        await ctx.telegram.sendMessage(chatId, msg.mutinyCancelled(ev.ship), { parse_mode: 'Markdown' });
+      }
+      continue;
+    }
+
     if (ev.type === 'attack') {
       const result = game.resolveAttack(i);
       await ctx.telegram.sendMessage(
@@ -144,6 +160,11 @@ async function resolveAllEvents(ctx, game) {
           await sendDM(ctx, captainId, msg.captainChooseHold, keyboard);
           return; // Wait for captain's choice before continuing
         }
+      } else {
+        // Failed attack: initiator sent to island
+        const initiatorName = game.players.get(result.initiator)?.name || '?';
+        game.sendToIsland(result.initiator);
+        await ctx.telegram.sendMessage(chatId, msg.attackFailedDeposed(initiatorName), { parse_mode: 'Markdown' });
       }
     } else if (ev.type === 'mutiny') {
       const result = game.resolveMutiny(i);
@@ -152,6 +173,11 @@ async function resolveAllEvents(ctx, game) {
         msg.mutinyResult(result.success, result.forV, result.against),
         { parse_mode: 'Markdown' }
       );
+      if (!result.success) {
+        // Failed mutiny consequence already applied in resolveMutiny, just announce
+        const initiatorName = game.players.get(result.initiator)?.name || '?';
+        await ctx.telegram.sendMessage(chatId, msg.mutinyFailedDeposed(initiatorName, result.ship), { parse_mode: 'Markdown' });
+      }
     } else if (ev.type === 'dispute') {
       const result = game.resolveDispute(i);
       await ctx.telegram.sendMessage(

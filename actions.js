@@ -161,7 +161,7 @@ async function attack(ctx) {
 
   const ship = game.getPlayerShip(userId);
   if (!ship) return ctx.reply(msg.notOnShip);
-  if (!game.isCaptain(userId)) return ctx.reply(msg.notCaptain);
+  if (!game.isCaptain(userId) && !game.isFirstMate(userId)) return ctx.reply(msg.notCaptainOrFirstMate);
 
   // Check for existing attack/mutiny on this ship
   if (game.pendingEvents.some((e) => (e.type === 'attack' || e.type === 'mutiny') && e.ship === ship)) {
@@ -178,11 +178,22 @@ async function attack(ctx) {
     }
     target = otherShip;
     await ctx.reply(msg.attackOtherShip(otherShip));
+
+    // Let the caller choose which hold to steal from
+    const buttons = [];
+    if (otherHolds.english > 0)
+      buttons.push(Markup.button.callback(`🇬🇧 انبار انگلیسی`, `act_attackhold_${userId}_english`));
+    if (otherHolds.french > 0)
+      buttons.push(Markup.button.callback(`🇫🇷 انبار فرانسوی`, `act_attackhold_${userId}_french`));
+
+    // Store context for the callback
+    game._pendingAttackHold = { ship, target, initiator: userId, role: game.isCaptain(userId) ? "ناخدای" : "معاون" };
+    return ctx.reply(msg.chooseStealHold, Markup.inlineKeyboard(buttons, { columns: 1 }));
   }
 
   game.addPendingEvent({ type: 'attack', ship, initiator: userId, target });
   game.markAction(userId);
-  await ctx.reply(msg.attackOrdered(p.name, ship));
+  await ctx.reply(msg.attackOrdered(p.name, ship, game.isCaptain(userId) ? "ناخدای" : "معاون"));
   await checkDayEnd(ctx, game);
 }
 
@@ -393,6 +404,20 @@ async function handleActionCallback(ctx) {
     await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();
     await ctx.telegram.sendMessage(chatId, msg.treasureMoved(p.name, ship, targetHold));
+
+  } else if (type === 'attackhold') {
+    const hold = value; // 'english' or 'french'
+    const pending = game._pendingAttackHold;
+    if (!pending || pending.initiator !== userId) {
+      await ctx.answerCbQuery('⚠️');
+      return;
+    }
+    game.addPendingEvent({ type: 'attack', ship: pending.ship, initiator: userId, target: pending.target, stealFrom: hold });
+    game.markAction(userId);
+    delete game._pendingAttackHold;
+    await ctx.answerCbQuery('✅');
+    await ctx.deleteMessage();
+    await ctx.telegram.sendMessage(chatId, msg.attackOrdered(p.name, pending.ship, pending.role));
 
   } else if (type === 'maroon') {
     const targetId = parseInt(value);
