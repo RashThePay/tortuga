@@ -269,7 +269,7 @@ class GameState {
       else if (v === 'water') waters++;
     }
 
-    const success = charges >= 1 && fires > waters;
+    const success = charges == 1 && fires > waters;
     return { success, charges, fires, waters, ship: ev.ship, target: ev.target, initiator: ev.initiator };
   }
 

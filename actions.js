@@ -161,7 +161,7 @@ async function attack(ctx) {
 
   const ship = game.getPlayerShip(userId);
   if (!ship) return ctx.reply(msg.notOnShip);
-  if (!game.isCaptain(userId) && !game.isFirstMate(userId)) return ctx.reply(msg.notCaptainOrFirstMate);
+  if (!game.isCaptain(userId)) return ctx.reply(msg.notCaptain);
 
   // Check for existing attack/mutiny on this ship
   if (game.pendingEvents.some((e) => (e.type === 'attack' || e.type === 'mutiny') && e.ship === ship)) {
@@ -187,13 +187,13 @@ async function attack(ctx) {
       buttons.push(Markup.button.callback(`🇫🇷 انبار فرانسوی`, `act_attackhold_${userId}_french`));
 
     // Store context for the callback
-    game._pendingAttackHold = { ship, target, initiator: userId, role: game.isCaptain(userId) ? "ناخدای" : "معاون" };
+    game._pendingAttackHold = { ship, target, initiator: userId };
     return ctx.reply(msg.chooseStealHold, Markup.inlineKeyboard(buttons, { columns: 1 }));
   }
 
   game.addPendingEvent({ type: 'attack', ship, initiator: userId, target });
   game.markAction(userId);
-  await ctx.reply(msg.attackOrdered(p.name, ship, game.isCaptain(userId) ? "ناخدای" : "معاون"));
+  await ctx.reply(msg.attackOrdered(p.name, ship,));
   await checkDayEnd(ctx, game);
 }
 
@@ -417,7 +417,7 @@ async function handleActionCallback(ctx) {
     delete game._pendingAttackHold;
     await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();
-    await ctx.telegram.sendMessage(chatId, msg.attackOrdered(p.name, pending.ship, pending.role));
+    await ctx.telegram.sendMessage(chatId, msg.attackOrdered(p.name, pending.ship));
 
   } else if (type === 'maroon') {
     const targetId = parseInt(value);
