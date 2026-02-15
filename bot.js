@@ -17,12 +17,14 @@ bot.command('start', (ctx) => {
 });
 
 // Day phase commands
-bot.command('board', (ctx) => actions.board(ctx));
-bot.command('disembark', (ctx) => actions.disembark(ctx));
+bot.command('jump', (ctx) => actions.moveLocation(ctx));
+bot.command('board', (ctx) => actions.board(ctx)); // Legacy
+bot.command('disembark', (ctx) => actions.disembark(ctx)); // Legacy
 bot.command('attack', (ctx) => actions.attack(ctx));
 bot.command('maroon', (ctx) => actions.maroon(ctx));
 bot.command('mutiny', (ctx) => actions.mutiny(ctx));
-bot.command('move', (ctx) => actions.moveTreasure(ctx));
+bot.command('replace', (ctx) => actions.moveTreasure(ctx));
+bot.command('move', (ctx) => actions.moveTreasure(ctx)); // Legacy
 bot.command('callarmada', (ctx) => actions.callArmada(ctx));
 bot.command('dispute', (ctx) => actions.dispute(ctx));
 bot.command('pass', (ctx) => actions.pass(ctx));

@@ -86,7 +86,14 @@ async function startGame(ctx) {
   // DM each player their team
   const dmFails = [];
   for (const [userId, p] of game.players) {
-    const text = p.team === 'dutch' ? msg.dutchDM : msg.teamDM(p.team);
+    let text;
+    if (p.team === 'dutch') {
+      text = msg.dutchDM;
+    } else if (p.team === 'spanish') {
+      text = msg.spanishDM;
+    } else {
+      text = msg.teamDM(p.team);
+    }
     const ok = await sendDM(ctx, userId, text);
     if (!ok) dmFails.push(p.name);
   }
@@ -108,7 +115,53 @@ async function startGame(ctx) {
   }
 }
 
-// /board - board rowboat
+// /move_location - direct movement from ship to island or island to ship
+async function moveLocation(ctx) {
+  const game = getGame(ctx.chat.id);
+  if (!game) return ctx.reply(msg.noGame);
+  if (game.phase !== 'day') return ctx.reply(msg.gameNotDay);
+
+  const userId = ctx.from.id;
+  const p = game.players.get(userId);
+  if (!p) return ctx.reply(msg.notInGame);
+  if (game.usedAction.has(userId)) return ctx.reply(msg.alreadyActed);
+
+  const currentLoc = p.location;
+  if (currentLoc === 'rowboat') return ctx.reply(msg.notValidForMove);
+
+  const buttons = [];
+
+  // From ship -> can go to island or other ship
+  if (currentLoc === 'flyingDutchman' || currentLoc === 'jollyRoger') {
+    const otherShip = currentLoc === 'flyingDutchman' ? 'jollyRoger' : 'flyingDutchman';
+
+    if (game.canMoveTo(userId, otherShip) && game.locations[otherShip].crew.length < 5) {
+      buttons.push(Markup.button.callback(LOCATION_NAMES[otherShip], `act_moveloc_${userId}_${otherShip === 'flyingDutchman' ? 'fd' : 'jr'}`));
+    }
+
+    if (game.canMoveTo(userId, 'island')) {
+      buttons.push(Markup.button.callback(LOCATION_NAMES.island, `act_moveloc_${userId}_island`));
+    }
+  }
+
+  // From island -> can go to either ship
+  if (currentLoc === 'island') {
+    if (game.canMoveTo(userId, 'flyingDutchman') && game.locations.flyingDutchman.crew.length < 5) {
+      buttons.push(Markup.button.callback(LOCATION_NAMES.flyingDutchman, `act_moveloc_${userId}_fd`));
+    }
+    if (game.canMoveTo(userId, 'jollyRoger') && game.locations.jollyRoger.crew.length < 5) {
+      buttons.push(Markup.button.callback(LOCATION_NAMES.jollyRoger, `act_moveloc_${userId}_jr`));
+    }
+  }
+
+  if (buttons.length === 0) {
+    return ctx.reply(msg.noValidMoveDestinations);
+  }
+
+  return ctx.reply(msg.chooseMoveDest, Markup.inlineKeyboard(buttons, { columns: 1 }));
+}
+
+// Keep old board/disembark for backward compatibility (will be deprecated)
 async function board(ctx) {
   const game = getGame(ctx.chat.id);
   if (!game) return ctx.reply(msg.noGame);
@@ -126,7 +179,6 @@ async function board(ctx) {
   await checkDayEnd(ctx, game);
 }
 
-// /disembark - show inline keyboard to choose destination
 async function disembark(ctx) {
   const game = getGame(ctx.chat.id);
   if (!game) return ctx.reply(msg.noGame);
@@ -376,7 +428,39 @@ async function handleActionCallback(ctx) {
   const p = game.players.get(userId);
   const chatId = game.chatId;
 
-  if (type === 'disembark') {
+  if (type === 'moveloc') {
+    const dest = SHIP_SHORT[value];
+    if (!dest) return ctx.answerCbQuery('⚠️');
+
+    // Check if can move to this location
+    if (!game.canMoveTo(userId, dest)) {
+      await ctx.answerCbQuery(msg.cannotReturnToExpelled);
+      return;
+    }
+
+    // Check location capacity
+    if (dest === 'flyingDutchman' || dest === 'jollyRoger') {
+      if (game.locations[dest].crew.length >= 5) {
+        await ctx.answerCbQuery(msg.locationFull(dest));
+        return;
+      }
+    }
+
+    // Perform move
+    game.removeFromLocation(userId);
+    if (dest === 'island') {
+      game.locations.island.residents.push(userId);
+    } else {
+      game.locations[dest].crew.push(userId);
+    }
+    p.location = dest;
+
+    game.markAction(userId);
+    await ctx.answerCbQuery('✅');
+    await ctx.deleteMessage();
+    await ctx.telegram.sendMessage(chatId, msg.movedTo(p.name, dest));
+
+  } else if (type === 'disembark') {
     const dest = SHIP_SHORT[value];
     if (!dest) return ctx.answerCbQuery('⚠️');
     const ok = game.disembark(userId, dest);
@@ -439,7 +523,7 @@ async function handleActionCallback(ctx) {
 }
 
 module.exports = {
-  newGame, join, startGame, board, disembark, attack, maroon,
+  newGame, join, startGame, board, disembark, moveLocation, attack, maroon,
   mutiny, moveTreasure, callArmada, dispute, pass, status, sendDM,
   handleActionCallback, checkDayEnd,
 };

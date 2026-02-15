@@ -160,12 +160,8 @@ async function resolveAllEvents(ctx, game) {
           await sendDM(ctx, captainId, msg.captainChooseHold, keyboard);
           return; // Wait for captain's choice before continuing
         }
-      } else {
-        // Failed attack: initiator sent to island
-        const initiatorName = game.players.get(result.initiator)?.name || '?';
-        game.sendToIsland(result.initiator);
-        await ctx.telegram.sendMessage(chatId, msg.attackFailedDeposed(initiatorName), { parse_mode: 'Markdown' });
       }
+      // No penalty for failed attack anymore
     } else if (ev.type === 'mutiny') {
       const result = game.resolveMutiny(i);
       await ctx.telegram.sendMessage(
@@ -173,11 +169,7 @@ async function resolveAllEvents(ctx, game) {
         msg.mutinyResult(result.success, result.forV, result.against),
         { parse_mode: 'Markdown' }
       );
-      if (!result.success) {
-        // Failed mutiny consequence already applied in resolveMutiny, just announce
-        const initiatorName = game.players.get(result.initiator)?.name || '?';
-        await ctx.telegram.sendMessage(chatId, msg.mutinyFailedDeposed(initiatorName, result.ship), { parse_mode: 'Markdown' });
-      }
+      // No penalty for failed mutiny anymore
     } else if (ev.type === 'dispute') {
       const result = game.resolveDispute(i);
       await ctx.telegram.sendMessage(
@@ -282,6 +274,29 @@ async function endGame(ctx, game) {
       await ctx.telegram.sendMessage(
         chatId,
         msg.dutchResult(dutchResult.won, dutchResult.reason)
+      );
+    }
+  }
+
+  // Spanish result
+  const spanishResult = game.getSpanishResult();
+  if (spanishResult) {
+    if (spanishResult.solo) {
+      await ctx.telegram.sendMessage(
+        chatId,
+        '🇪🇸 بازیکن اسپانیایی به‌تنهایی برنده‌ی بازی شد! (حاکم جزیره در بازی مساوی)',
+        { parse_mode: 'Markdown' }
+      );
+    } else if (spanishResult.independent) {
+      await ctx.telegram.sendMessage(
+        chatId,
+        `🇪🇸 بازیکن اسپانیایی نیز *برنده* شد! (${spanishResult.reason})`,
+        { parse_mode: 'Markdown' }
+      );
+    } else {
+      await ctx.telegram.sendMessage(
+        chatId,
+        msg.spanishResult(spanishResult.won, spanishResult.reason)
       );
     }
   }
