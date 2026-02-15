@@ -64,7 +64,7 @@ async function startGame(ctx) {
   const game = getGame(ctx.chat.id);
   if (!game) return ctx.reply(msg.noGame);
   if (game.phase !== 'lobby') return ctx.reply(msg.gameNotLobby);
-  if (game.lobbyPlayers.length < 2) return ctx.reply(msg.needMorePlayers);
+  if (game.lobbyPlayers.length < 4) return ctx.reply(msg.needMorePlayers);
 
   const { fdCaptain, jrCaptain } = game.startGame();
 

@@ -33,7 +33,7 @@ const msg = {
   joined: (name) => `✅ ‏${name} به بازی پیوست!`,
   alreadyJoined: '⚠️ شما قبلاً به بازی پیوسته‌اید.',
   notInGame: '⚠️ شما در این بازی نیستید.',
-  needMorePlayers: '⚠️ حداقل ۲ بازیکن لازم است.',
+  needMorePlayers: '⚠️ حداقل ۴ بازیکن لازم است.',
   tooManyPlayers: '⚠️ حداکثر ۱۰ بازیکن مجاز است.',
   gameNotDay: '⚠️ الان فاز روز نیست.',
   gameNotLobby: '⚠️ بازی قبلاً شروع شده.',
