@@ -215,9 +215,9 @@ async function attack(ctx) {
   if (!ship) return ctx.reply(msg.notOnShip);
   if (!game.isCaptain(userId)) return ctx.reply(msg.notCaptain);
 
-  // Check for existing attack/mutiny on this ship
-  if (game.pendingEvents.some((e) => (e.type === 'attack' || e.type === 'mutiny') && e.ship === ship)) {
-    return ctx.reply(msg.attackAlreadyPending);
+  // Check for existing attack/maroon on this ship (captain can only do one)
+  if (game.pendingEvents.some((e) => (e.type === 'attack' || e.type === 'maroon') && e.ship === ship)) {
+    return ctx.reply(msg.captainAlreadyActed);
   }
 
   // Determine target
@@ -249,7 +249,7 @@ async function attack(ctx) {
   await checkDayEnd(ctx, game);
 }
 
-// /maroon - show inline keyboard to choose crew member
+// /maroon - show inline keyboard to choose crew member (deferred to night)
 async function maroon(ctx) {
   const game = getGame(ctx.chat.id);
   if (!game) return ctx.reply(msg.noGame);
@@ -263,6 +263,11 @@ async function maroon(ctx) {
   const ship = game.getPlayerShip(userId);
   if (!ship) return ctx.reply(msg.notOnShip);
   if (!game.isCaptain(userId)) return ctx.reply(msg.notCaptain);
+
+  // Check for existing attack/maroon on this ship (captain can only do one)
+  if (game.pendingEvents.some((e) => (e.type === 'attack' || e.type === 'maroon') && e.ship === ship)) {
+    return ctx.reply(msg.captainAlreadyActed);
+  }
 
   const crew = game.locations[ship].crew;
   if (crew.length <= 1) return ctx.reply(msg.onlyOneCrewCantMaroon);
@@ -292,8 +297,9 @@ async function mutiny(ctx) {
   if (!ship) return ctx.reply(msg.notOnShip);
   if (!game.isFirstMate(userId)) return ctx.reply(msg.notFirstMate);
 
-  if (game.pendingEvents.some((e) => (e.type === 'attack' || e.type === 'mutiny') && e.ship === ship)) {
-    return ctx.reply(msg.attackAlreadyPending);
+  // Only one mutiny per ship per round
+  if (game.pendingEvents.some((e) => e.type === 'mutiny' && e.ship === ship)) {
+    return ctx.reply(msg.mutinyAlreadyPending);
   }
 
   game.addPendingEvent({ type: 'mutiny', ship, initiator: userId });
@@ -512,11 +518,12 @@ async function handleActionCallback(ctx) {
       return;
     }
     const target = game.players.get(targetId);
-    game.sendToIsland(targetId);
+    // Defer maroon to night phase (so mutiny can cancel it)
+    game.addPendingEvent({ type: 'maroon', ship, initiator: userId, targetId });
     game.markAction(userId);
     await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();
-    await ctx.telegram.sendMessage(chatId, msg.maroonPlayer(p.name, target.name, ship));
+    await ctx.telegram.sendMessage(chatId, msg.maroonOrdered(p.name, target.name, ship));
   }
 
   await checkDayEnd(ctx, game);

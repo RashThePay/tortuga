@@ -109,8 +109,14 @@ const msg = {
 
   maroonPlayer: (captain, target, ship) =>
     `🏝 ‏${captain} (ناخدای ${shipLabel(ship)}) ${target} را به جزیره فرستاد!`,
+  maroonOrdered: (captain, target, ship) =>
+    `🏴‍☠️ ‏${captain} (ناخدای ${shipLabel(ship)}) دستور اخراج ${target} را داد!`,
   cantMaroonSelf: '⚠️ نمی‌توانید خودتان را به خشکی بفرستید.',
   playerNotOnShip: '⚠️ این بازیکن در کشتی شما نیست.',
+  captainAlreadyActed: '⚠️ ناخدا قبلاً اقدام خود را انتخاب کرده. (فقط یکی از حمله یا اخراج)',
+  mutinyAlreadyPending: '⚠️ در این راند قبلاً شورش اعلام شده.',
+  captainActionCancelledByMutiny: (ship) =>
+    `⚔️ اقدام ناخدای ${shipLabel(ship)} لغو شد — شورش موفق بود!`,
 
   mutinyStarted: (name, ship) =>
     `⚔️ ‏${name} (معاون ${shipLabel(ship)}) شورش به‌پا کرد!`,

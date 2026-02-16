@@ -282,6 +282,7 @@ class GameState {
       } else if (ev.type === 'dispute') {
         for (const id of this.locations.island.residents) voters.add(id);
       }
+      // 'maroon' type has no voting - it just gets resolved during night
       this.expectedVoters.set(i, voters);
       this.votes.set(i, new Map());
     }

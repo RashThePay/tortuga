@@ -127,14 +127,51 @@ async function handleSetupCallback(ctx) {
 async function resolveAllEvents(ctx, game) {
   const chatId = game.chatId;
 
+  // Resolution order:
+  // 1. Mutinies (resolved first)
+  // 2. Captain actions: attack or maroon (cancelled if mutiny on same ship succeeded)
+  // 3. Disputes
+  // 4. Armada (already handled during day)
+
+  // Track which ships had successful mutinies
+  const mutinySucceeded = new Set();
+
+  // Step 1: Resolve all mutinies
   for (let i = 0; i < game.pendingEvents.length; i++) {
     const ev = game.pendingEvents[i];
+    if (ev.type !== 'mutiny') continue;
+
+    if (ev.cancelled) {
+      await ctx.telegram.sendMessage(chatId, msg.mutinyCancelled(ev.ship), { parse_mode: 'Markdown' });
+      continue;
+    }
+
+    const result = game.resolveMutiny(i);
+    await ctx.telegram.sendMessage(
+      chatId,
+      msg.mutinyResult(result.success, result.forV, result.against),
+      { parse_mode: 'Markdown' }
+    );
+
+    if (result.success) {
+      mutinySucceeded.add(ev.ship);
+    }
+  }
+
+  // Step 2: Resolve captain actions (attack / maroon) — cancelled if mutiny succeeded on same ship
+  for (let i = 0; i < game.pendingEvents.length; i++) {
+    const ev = game.pendingEvents[i];
+    if (ev.type !== 'attack' && ev.type !== 'maroon') continue;
+
+    // Cancel captain's action if mutiny succeeded on this ship
+    if (mutinySucceeded.has(ev.ship)) {
+      await ctx.telegram.sendMessage(chatId, msg.captainActionCancelledByMutiny(ev.ship), { parse_mode: 'Markdown' });
+      continue;
+    }
 
     if (ev.cancelled) {
       if (ev.type === 'attack') {
         await ctx.telegram.sendMessage(chatId, msg.attackCancelled(ev.ship), { parse_mode: 'Markdown' });
-      } else if (ev.type === 'mutiny') {
-        await ctx.telegram.sendMessage(chatId, msg.mutinyCancelled(ev.ship), { parse_mode: 'Markdown' });
       }
       continue;
     }
@@ -148,46 +185,58 @@ async function resolveAllEvents(ctx, game) {
       );
 
       if (result.success) {
-        // Captain chooses which hold to put the treasure
         const captainId = game.locations[result.ship].crew[0];
         if (captainId) {
-          // Store pending treasure placement
           game._pendingTreasurePlacement = { ship: result.ship, eventIndex: i };
           const keyboard = Markup.inlineKeyboard([
             Markup.button.callback('🇬🇧 انبار انگلیسی', 'loot_english'),
             Markup.button.callback('🇫🇷 انبار فرانسوی', 'loot_french'),
           ]);
           await sendDM(ctx, captainId, msg.captainChooseHold, keyboard);
-          return; // Wait for captain's choice before continuing
+          // Store remaining events to resolve after loot choice
+          game._remainingResolution = { mutinySucceeded };
+          return; // Wait for captain's choice
         }
       }
-      // No penalty for failed attack anymore
-    } else if (ev.type === 'mutiny') {
-      const result = game.resolveMutiny(i);
-      await ctx.telegram.sendMessage(
-        chatId,
-        msg.mutinyResult(result.success, result.forV, result.against),
-        { parse_mode: 'Markdown' }
-      );
-      // No penalty for failed mutiny anymore
-    } else if (ev.type === 'dispute') {
-      const result = game.resolveDispute(i);
-      await ctx.telegram.sendMessage(
-        chatId,
-        msg.disputeResult(result.engVotes, result.frVotes),
-        { parse_mode: 'Markdown' }
-      );
-      if (result.governorDeposed) {
-        const govName = game.players.get(result.governor)?.name || '?';
-        await ctx.telegram.sendMessage(
-          chatId,
-          msg.governorDeposed(govName)
-        );
+    } else if (ev.type === 'maroon') {
+      // Execute maroon: send target to island
+      const target = game.players.get(ev.targetId);
+      if (target) {
+        game.sendToIsland(ev.targetId, true); // Mark as expelled
+        const initiatorName = game.players.get(ev.initiator)?.name || '?';
+        await ctx.telegram.sendMessage(chatId, msg.maroonPlayer(initiatorName, target.name, ev.ship));
       }
     }
   }
 
+  // Step 3: Resolve disputes
+  await resolveDisputes(ctx, game);
+
   await advanceRound(ctx, game);
+}
+
+async function resolveDisputes(ctx, game) {
+  const chatId = game.chatId;
+
+  for (let i = 0; i < game.pendingEvents.length; i++) {
+    const ev = game.pendingEvents[i];
+    if (ev.type !== 'dispute') continue;
+    if (ev.cancelled) continue;
+
+    const result = game.resolveDispute(i);
+    await ctx.telegram.sendMessage(
+      chatId,
+      msg.disputeResult(result.engVotes, result.frVotes),
+      { parse_mode: 'Markdown' }
+    );
+    if (result.governorDeposed) {
+      const govName = game.players.get(result.governor)?.name || '?';
+      await ctx.telegram.sendMessage(
+        chatId,
+        msg.governorDeposed(govName)
+      );
+    }
+  }
 }
 
 // Handle loot callback (captain choosing hold after successful attack)
@@ -216,7 +265,62 @@ async function handleLootCallback(ctx) {
     { parse_mode: 'Markdown' }
   );
 
-  // Continue resolving remaining events
+  // Continue resolving remaining captain actions and disputes
+  const mutinySucceeded = game._remainingResolution?.mutinySucceeded || new Set();
+  delete game._remainingResolution;
+
+  const chatId = game.chatId;
+
+  // Continue with remaining captain actions (attack/maroon) after the one that triggered loot
+  let pastLoot = false;
+  for (let i = 0; i < game.pendingEvents.length; i++) {
+    const ev = game.pendingEvents[i];
+    if (ev.type !== 'attack' && ev.type !== 'maroon') continue;
+    if (ev.ship === ship && ev.type === 'attack') {
+      pastLoot = true; // This was the attack that triggered loot
+      continue;
+    }
+    if (!pastLoot) continue;
+
+    if (mutinySucceeded.has(ev.ship)) {
+      await ctx.telegram.sendMessage(chatId, msg.captainActionCancelledByMutiny(ev.ship), { parse_mode: 'Markdown' });
+      continue;
+    }
+    if (ev.cancelled) continue;
+
+    if (ev.type === 'attack') {
+      const result = game.resolveAttack(i);
+      await ctx.telegram.sendMessage(
+        chatId,
+        msg.attackResult(result.success, result.charges, result.fires, result.waters),
+        { parse_mode: 'Markdown' }
+      );
+      if (result.success) {
+        const captainId = game.locations[result.ship].crew[0];
+        if (captainId) {
+          game._pendingTreasurePlacement = { ship: result.ship, eventIndex: i };
+          game._remainingResolution = { mutinySucceeded };
+          const keyboard = Markup.inlineKeyboard([
+            Markup.button.callback('🇬🇧 انبار انگلیسی', 'loot_english'),
+            Markup.button.callback('🇫🇷 انبار فرانسوی', 'loot_french'),
+          ]);
+          await sendDM(ctx, captainId, msg.captainChooseHold, keyboard);
+          return;
+        }
+      }
+    } else if (ev.type === 'maroon') {
+      const target = game.players.get(ev.targetId);
+      if (target) {
+        game.sendToIsland(ev.targetId, true);
+        const initiatorName = game.players.get(ev.initiator)?.name || '?';
+        await ctx.telegram.sendMessage(chatId, msg.maroonPlayer(initiatorName, target.name, ev.ship));
+      }
+    }
+  }
+
+  // Resolve disputes
+  await resolveDisputes(ctx, game);
+
   await advanceRound(ctx, game);
 }
 
