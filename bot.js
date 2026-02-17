@@ -15,14 +15,18 @@ bot.command('start', (ctx) => {
   }
   return actions.startGame(ctx);
 });
+bot.command('leave', (ctx) => actions.leave(ctx));
+bot.command('endgame', (ctx) => actions.endGame(ctx));
+bot.command('players', (ctx) => actions.listPlayers(ctx));
+bot.command('help', (ctx) => actions.sendHelp(ctx));
 
 // Day phase commands
-bot.command('board', (ctx) => actions.board(ctx));
-bot.command('disembark', (ctx) => actions.disembark(ctx));
+bot.command('jump', (ctx) => actions.moveLocation(ctx));
 bot.command('attack', (ctx) => actions.attack(ctx));
 bot.command('maroon', (ctx) => actions.maroon(ctx));
 bot.command('mutiny', (ctx) => actions.mutiny(ctx));
-bot.command('move', (ctx) => actions.moveTreasure(ctx));
+bot.command('inspect', (ctx) => actions.inspect(ctx));
+bot.command('replace', (ctx) => actions.moveTreasure(ctx));
 bot.command('callarmada', (ctx) => actions.callArmada(ctx));
 bot.command('dispute', (ctx) => actions.dispute(ctx));
 bot.command('pass', (ctx) => actions.pass(ctx));
@@ -31,6 +35,7 @@ bot.command('status', (ctx) => actions.status(ctx));
 // Callback queries (inline keyboard presses)
 bot.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data;
+  if (data.startsWith('newgame_')) return actions.handleNewgameModeCallback(ctx);
   if (data.startsWith('vote_')) return votes.handleVoteCallback(ctx);
   if (data.startsWith('setup_')) return votes.handleSetupCallback(ctx);
   if (data.startsWith('loot_')) return votes.handleLootCallback(ctx);
@@ -48,6 +53,9 @@ module.exports = bot;
 if (require.main === module) {
   bot.launch(() => {
     console.log('🏴‍☠️ Tortuga bot is running (polling)!');
+    bot.telegram.sendMessage(process.env.ADMIN_USER_ID || 440613406, '🤖 ربات جزیره‌ی گنج راه‌اندازی شد!').catch(() => {
+      console.warn('⚠️ نمی‌توانم پیام راه‌اندازی را به ادمین ارسال کنم. مطمئن شوید ADMIN_USER_ID را تنظیم کرده‌اید.');
+    });
   });
   process.once('SIGINT', () => bot.stop('SIGINT'));
   process.once('SIGTERM', () => bot.stop('SIGTERM'));

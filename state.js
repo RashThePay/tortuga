@@ -3,13 +3,13 @@ class GameState {
     this.chatId = chatId;
     this.phase = 'lobby'; // lobby | setup | day | night | ended
     this.round = 0;
-    this.players = new Map(); // userId -> { id, name, team, location }
+    this.players = new Map(); // userId -> { id, name, team, location, expelledFrom: [] }
     this.lobbyPlayers = []; // [{ id, name }] before game starts
+    this.mistMode = false; // Mist mode: hidden treasure breakdown
     this.locations = {
-      flyingDutchman: { crew: [], holds: { english: 0, french: 0 } },
-      jollyRoger: { crew: [], holds: { english: 0, french: 0 } },
-      island: { residents: [], treasures: { english: 1, french: 1 } },
-      rowboat: [],
+      flyingDutchman: { crew: [], holds: { english: 0, french: 0 }, pendingJoins: [] },
+      jollyRoger: { crew: [], holds: { english: 0, french: 0 }, pendingJoins: [] },
+      island: { residents: [], treasures: { english: 1, french: 1 }, pendingJoins: [] },
       spanishShip: { treasures: 4 },
     };
     this.pendingEvents = []; // [{ type, ship?, initiator?, target? }]
@@ -20,6 +20,7 @@ class GameState {
     this.armadaCalled = false;
     this.disputeThisRound = false;
     this.setupPending = new Set(); // captains who still need to place initial treasure
+    this.successfulAttackShips = new Set(); // ships that had successful attacks this round
   }
 
   addLobbyPlayer(id, name) {
@@ -27,7 +28,9 @@ class GameState {
     this.lobbyPlayers.push({ id, name });
     return true;
   }
-
+  removeLobbyPlayer(id) {
+    this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.id !== id);
+  }
   startGame() {
     const players = [...this.lobbyPlayers];
     shuffle(players);
@@ -38,7 +41,21 @@ class GameState {
     const teams = [];
     for (let i = 0; i < half; i++) teams.push('english');
     for (let i = 0; i < half; i++) teams.push('french');
-    if (isOdd) teams.push('dutch');
+
+    // Odd number: exactly one Dutch or Spanish
+    // Even number: both Dutch and Spanish, or neither (50% chance each)
+    if (isOdd) {
+      teams.push(Math.random() < 0.5 ? 'dutch' : 'spanish');
+    } else {
+      if (Math.random() < 0.5) {
+        teams.push('dutch');
+        teams.push('spanish');
+        // Remove one English and one French
+        teams.splice(teams.indexOf('english'), 1);
+        teams.splice(teams.indexOf('french'), 1);
+      }
+      // else: no dutch or spanish, all english/french
+    }
     shuffle(teams);
 
     for (let i = 0; i < players.length; i++) {
@@ -47,6 +64,7 @@ class GameState {
         name: players[i].name,
         team: teams[i],
         location: null,
+        expelledFrom: [], // Track expelled locations from current and previous round
       });
     }
 
@@ -92,6 +110,15 @@ class GameState {
     this.votes.clear();
     this.expectedVoters.clear();
     this.disputeThisRound = false;
+    this.successfulAttackShips.clear(); // Reset attack tracking for the new day
+
+    // Clear expulsion history from 2+ rounds ago (keep only current and previous round)
+    for (const [, p] of this.players) {
+      if (p.expelledFrom && p.expelledFrom.length > 0) {
+        // Keep only the most recent expulsion
+        p.expelledFrom = p.expelledFrom.slice(-1);
+      }
+    }
   }
 
   markAction(userId) {
@@ -148,16 +175,16 @@ class GameState {
     return residents.length > 0 && residents[0] === userId;
   }
 
-  isOnRowboat(userId) {
+  canMoveTo(userId, destination) {
     const p = this.players.get(userId);
-    return p && p.location === 'rowboat';
-  }
+    if (!p) return false;
 
-  boardRowboat(userId) {
-    const p = this.players.get(userId);
-    this.removeFromLocation(userId);
-    this.locations.rowboat.push(userId);
-    p.location = 'rowboat';
+    // Cannot return to location expelled from in current or previous round
+    if (p.expelledFrom && p.expelledFrom.includes(destination)) {
+      return false;
+    }
+
+    return true;
   }
 
   disembark(userId, destination) {
@@ -181,25 +208,29 @@ class GameState {
     const p = this.players.get(userId);
     if (!p) return;
     const loc = p.location;
+    let prevRanking = null;
     if (loc === 'flyingDutchman' || loc === 'jollyRoger') {
+      prevRanking = this.locations[loc].crew.indexOf(userId);
       this.locations[loc].crew = this.locations[loc].crew.filter((id) => id !== userId);
     } else if (loc === 'island') {
+      prevRanking = this.locations.island.residents.indexOf(userId);
       this.locations.island.residents = this.locations.island.residents.filter((id) => id !== userId);
-    } else if (loc === 'rowboat') {
-      this.locations.rowboat = this.locations.rowboat.filter((id) => id !== userId);
     }
+    return prevRanking;
   }
 
-  sendToIsland(userId) {
+  sendToIsland(userId, expelled = false) {
+    const p = this.players.get(userId);
+    const fromLocation = p.location;
     this.removeFromLocation(userId);
     this.locations.island.residents.push(userId);
-    this.players.get(userId).location = 'island';
-  }
+    p.location = 'island';
 
-  sendToRowboat(userId) {
-    this.removeFromLocation(userId);
-    this.locations.rowboat.push(userId);
-    this.players.get(userId).location = 'rowboat';
+    // Track expulsion to prevent immediate return
+    if (expelled && fromLocation && fromLocation !== 'island') {
+      if (!p.expelledFrom) p.expelledFrom = [];
+      p.expelledFrom.push(fromLocation);
+    }
   }
 
   addPendingEvent(event) {
@@ -208,6 +239,27 @@ class GameState {
 
   startNight() {
     this.phase = 'night';
+    // resolve pending joins and give ranks based on previous ranking if applicable
+    for (const locKey of ['flyingDutchman', 'jollyRoger', 'island']) {
+      const loc = this.locations[locKey];
+      if (loc.pendingJoins.length > 0) {
+        // Sort pending joins by previous ranking (lower is better), 
+        loc.pendingJoins.sort((a, b) => {
+          if (a.ranking === null) return 1;
+          if (b.ranking === null) return -1;
+          // do ties preserve original order? JS sort is stable, so it should
+          return a.ranking - b.ranking;
+        });
+        for (const join of loc.pendingJoins) {
+          if (locKey === 'island') {
+            this.locations.island.residents.push(join.userId);
+          } else {
+            this.locations[locKey].crew.push(join.userId);
+          }
+        }
+        loc.pendingJoins = [];
+      }
+    }
     // Set up voters for each pending event
     for (let i = 0; i < this.pendingEvents.length; i++) {
       const ev = this.pendingEvents[i];
@@ -221,16 +273,22 @@ class GameState {
         }
       } else if (ev.type === 'mutiny') {
         const crew = this.locations[ev.ship].crew;
-        const captain = crew[0];
-        const nonCaptainCrew = crew.filter(id => id !== captain);
-        if (nonCaptainCrew.length < 2) {
+        // If ship has no crew or captain is no longer captain (not at index 0), cancel mutiny
+        if (crew.length === 0 || crew.length < 2) {
           ev.cancelled = true;
         } else {
-          for (const id of nonCaptainCrew) voters.add(id);
+          const captain = crew[0];
+          const nonCaptainCrew = crew.filter(id => id !== captain);
+          if (nonCaptainCrew.length < 2) {
+            ev.cancelled = true;
+          } else {
+            for (const id of nonCaptainCrew) voters.add(id);
+          }
         }
       } else if (ev.type === 'dispute') {
         for (const id of this.locations.island.residents) voters.add(id);
       }
+      // 'maroon' and 'inspect' types have no voting - they just get resolved during night
       this.expectedVoters.set(i, voters);
       this.votes.set(i, new Map());
     }
@@ -269,11 +327,13 @@ class GameState {
       else if (v === 'water') waters++;
     }
 
-    const success = charges == 1 && fires > waters;
+    // New rules: exactly 1 charge, at least 1 fire, extinguish votes must not be > 1
+    const success = charges === 1 && fires >= 1 && waters <= 1;
     return { success, charges, fires, waters, ship: ev.ship, target: ev.target, initiator: ev.initiator };
   }
 
   applyAttackSuccess(ship, hold) {
+    this.successfulAttackShips.add(ship); // Mark this ship as having had a successful attack
     const ev = this.pendingEvents.find(e => e.type === 'attack' && e.ship === ship);
     const target = ev?.target || 'spanishShip';
     if (target === 'spanishShip') {
@@ -306,17 +366,14 @@ class GameState {
     const success = forV > against;
     if (success) {
       const captain = this.locations[ev.ship].crew[0];
-      this.sendToIsland(captain);
-    } else {
-      // Failed mutiny: first mate (initiator) sent to island
-      this.sendToIsland(ev.initiator);
+      this.sendToIsland(captain, true); // Mark as expelled
     }
+    // No penalty for failed mutiny anymore
     return { success, forV, against, ship: ev.ship, initiator: ev.initiator };
   }
 
   resolveDispute(eventIndex) {
     const voteMap = this.votes.get(eventIndex);
-    const expected = this.expectedVoters.get(eventIndex);
 
     let engVotes = 0, frVotes = 0;
     for (const v of voteMap.values()) {
@@ -338,24 +395,29 @@ class GameState {
       this.locations.island.treasures = { english: 1, french: 1 };
     }
 
-    // Check if governor voted for the losing side
+    // Check if governor voted for the losing side or didn't win
     const governor = this.locations.island.residents[0];
     let governorDeposed = false;
     if (governor) {
       const govVote = voteMap.get(governor);
       const govTeam = this.players.get(governor)?.team;
 
-      // Dutch governor always gets deposed after dispute
-      if (govTeam === 'dutch') {
-        this.sendToRowboat(governor);
+      // Dutch and Spanish governors always get deposed after dispute
+      if ((govTeam === 'dutch' || govTeam === 'spanish') && !this.mistMode) {
+        // Send to last rank on island instead of rowboat
+        this.removeFromLocation(governor);
+        this.locations.island.residents.push(governor);
         governorDeposed = true;
       } else if (govVote) {
         const govSide = govVote; // 'england' or 'france'
-        const lost =
-          (govSide === 'england' && frVotes > engVotes) ||
-          (govSide === 'france' && engVotes > frVotes);
-        if (lost) {
-          this.sendToRowboat(governor);
+        // Deposed if didn't win (lost or tie)
+        const didNotWin =
+          (govSide === 'england' && frVotes >= engVotes) ||
+          (govSide === 'france' && engVotes >= frVotes);
+        if (didNotWin) {
+          // Send to last rank on island instead of rowboat
+          this.removeFromLocation(governor);
+          this.locations.island.residents.push(governor);
           governorDeposed = true;
         }
       }
@@ -387,33 +449,52 @@ class GameState {
 
   getDutchResult() {
     let dutchPlayer = null;
-    for (const [id, p] of this.players) {
+    for (const [, p] of this.players) {
       if (p.team === 'dutch') { dutchPlayer = p; break; }
     }
     if (!dutchPlayer) return null;
 
-    const { winner, tie } = this.getWinner();
+    const { tie } = this.getWinner();
 
     // Dutch is governor and it's a tie -> Dutch wins alone
     if (tie && this.isGovernor(dutchPlayer.id)) {
       return { won: true, reason: 'حاکم جزیره در بازی مساوی', solo: true };
     }
 
-    // Dutch is captain of a ship -> wins
+    // Dutch is captain of ship with most treasure -> wins
     const ship = this.getPlayerShip(dutchPlayer.id);
     if (ship && this.isCaptain(dutchPlayer.id)) {
-      return { won: true, reason: 'ناخدای کشتی' };
+      const holds = this.locations[ship].holds;
+      const shipTotal = holds.english + holds.french;
+      const otherShip = ship === 'flyingDutchman' ? 'jollyRoger' : 'flyingDutchman';
+      const otherHolds = this.locations[otherShip].holds;
+      const otherTotal = otherHolds.english + otherHolds.french;
+
+      if (shipTotal > otherTotal) {
+        return { won: true, reason: 'ناخدای کشتی با گنج بیشتر' };
+      }
     }
 
-    // Dutch is on a ship where winning team has more treasure
-    if (ship) {
-      const holds = this.locations[ship].holds;
-      if (winner === 'english' && holds.english > holds.french) {
-        return { won: true, reason: 'در کشتی‌ای با گنج بیشتر تیم برنده' };
-      }
-      if (winner === 'french' && holds.french > holds.english) {
-        return { won: true, reason: 'در کشتی‌ای با گنج بیشتر تیم برنده' };
-      }
+    return { won: false };
+  }
+
+  getSpanishResult() {
+    let spanishPlayer = null;
+    for (const [, p] of this.players) {
+      if (p.team === 'spanish') { spanishPlayer = p; break; }
+    }
+    if (!spanishPlayer) return null;
+
+    const { tie } = this.getWinner();
+
+    // Spanish ship has at least 2 treasures -> wins independently (others can still win)
+    if (this.locations.spanishShip.treasures >= 2) {
+      return { won: true, reason: 'کشتی اسپانیایی حداقل ۲ گنج دارد', independent: true };
+    }
+
+    // Spanish is governor and it's a tie -> Spanish wins alone
+    if (tie && this.isGovernor(spanishPlayer.id)) {
+      return { won: true, reason: 'حاکم جزیره در بازی مساوی', solo: true };
     }
 
     return { won: false };
