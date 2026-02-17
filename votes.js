@@ -108,12 +108,12 @@ async function handleSetupCallback(ctx) {
   }
 
   await ctx.answerCbQuery('✅');
-  await ctx.editMessageText(msg.treasurePlaced(result.ship, result.hold, game.mistMode));
+  await ctx.editMessageText(msg.treasurePlaced(result.ship, result.hold, false));
 
   // Announce in group
   await ctx.telegram.sendMessage(
     game.chatId,
-    msg.treasurePlaced(result.ship, result.hold),
+    msg.treasurePlaced(result.ship, result.hold, game.mistMode),
     { parse_mode: 'Markdown' }
   );
 
