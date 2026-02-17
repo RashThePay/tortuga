@@ -533,13 +533,13 @@ async function handleActionCallback(ctx) {
         return;
       }
     }
-
     // Perform move
-    game.removeFromLocation(userId);
+    
+    const previousRanking = game.removeFromLocation(userId);
     if (dest === 'island') {
-      game.locations.island.residents.push(userId);
+      game.locations.island.pendinJoins.push({userId, ranking: previousRanking});
     } else {
-      game.locations[dest].crew.push(userId);
+      game.locations[dest].pendingJoins.push({userId, ranking: previousRanking});
     }
     p.location = dest;
 

@@ -7,9 +7,9 @@ class GameState {
     this.lobbyPlayers = []; // [{ id, name }] before game starts
     this.mistMode = false; // Mist mode: hidden treasure breakdown
     this.locations = {
-      flyingDutchman: { crew: [], holds: { english: 0, french: 0 } },
-      jollyRoger: { crew: [], holds: { english: 0, french: 0 } },
-      island: { residents: [], treasures: { english: 1, french: 1 } },
+      flyingDutchman: { crew: [], holds: { english: 0, french: 0 }, pendingJoins: [] },
+      jollyRoger: { crew: [], holds: { english: 0, french: 0 }, pendingJoins: [] },
+      island: { residents: [], treasures: { english: 1, french: 1 }, pendingJoins: [] },
       spanishShip: { treasures: 4 },
     };
     this.pendingEvents = []; // [{ type, ship?, initiator?, target? }]
@@ -28,7 +28,7 @@ class GameState {
     this.lobbyPlayers.push({ id, name });
     return true;
   }
-  removeLobbyPlayer(id) { 
+  removeLobbyPlayer(id) {
     this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.id !== id);
   }
   startGame() {
@@ -116,7 +116,7 @@ class GameState {
     for (const [, p] of this.players) {
       if (p.expelledFrom && p.expelledFrom.length > 0) {
         // Keep only the most recent expulsion
-        p.expelledFrom =p.expelledFrom.slice(-1);
+        p.expelledFrom = p.expelledFrom.slice(-1);
       }
     }
   }
@@ -208,11 +208,15 @@ class GameState {
     const p = this.players.get(userId);
     if (!p) return;
     const loc = p.location;
+    let prevRanking = null;
     if (loc === 'flyingDutchman' || loc === 'jollyRoger') {
+      prevRanking = this.locations[loc].crew.indexOf(userId);
       this.locations[loc].crew = this.locations[loc].crew.filter((id) => id !== userId);
     } else if (loc === 'island') {
+      prevRanking = this.locations.island.residents.indexOf(userId);
       this.locations.island.residents = this.locations.island.residents.filter((id) => id !== userId);
     }
+    return prevRanking;
   }
 
   sendToIsland(userId, expelled = false) {
@@ -235,6 +239,27 @@ class GameState {
 
   startNight() {
     this.phase = 'night';
+    // resolve pending joins and give ranks based on previous ranking if applicable
+    for (const locKey of ['flyingDutchman', 'jollyRoger', 'island']) {
+      const loc = this.locations[locKey];
+      if (loc.pendingJoins.length > 0) {
+        // Sort pending joins by previous ranking (lower is better), 
+        loc.pendingJoins.sort((a, b) => {
+          if (a.ranking === null) return 1;
+          if (b.ranking === null) return -1;
+          // do ties preserve original order? JS sort is stable, so it should
+          return a.ranking - b.ranking;
+        });
+        for (const join of loc.pendingJoins) {
+          if (locKey === 'island') {
+            this.locations.island.residents.push(join.userId);
+          } else {
+            this.locations[locKey].crew.push(join.userId);
+          }
+        }
+        loc.pendingJoins = [];
+      }
+    }
     // Set up voters for each pending event
     for (let i = 0; i < this.pendingEvents.length; i++) {
       const ev = this.pendingEvents[i];
@@ -378,7 +403,7 @@ class GameState {
       const govTeam = this.players.get(governor)?.team;
 
       // Dutch and Spanish governors always get deposed after dispute
-      if (govTeam === 'dutch' || govTeam === 'spanish') {
+      if ((govTeam === 'dutch' || govTeam === 'spanish') && !this.mistMode) {
         // Send to last rank on island instead of rowboat
         this.removeFromLocation(governor);
         this.locations.island.residents.push(governor);
