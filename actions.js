@@ -381,8 +381,8 @@ async function moveTreasure(ctx) {
     if (total === 0) return ctx.reply(msg.noTreasureToMove('english'));
 
     const buttons = [
-      Markup.button.callback('🇬🇧 → 🇫🇷', `act_move_mist_${userId}_french`),
-      Markup.button.callback('🇫🇷 → 🇬🇧', `act_move_mist_${userId}_english`),
+      Markup.button.callback('🇬🇧 → 🇫🇷', `act_movemist_${userId}_french`),
+      Markup.button.callback('🇫🇷 → 🇬🇧', `act_movemist_${userId}_english`),
     ];
     return ctx.reply(msg.chooseMoveDirection, Markup.inlineKeyboard(buttons, { columns: 1 }));
   }
@@ -564,7 +564,7 @@ async function handleActionCallback(ctx) {
     await ctx.deleteMessage();
     await ctx.telegram.sendMessage(chatId, msg.treasureMoved(p.name, ship, targetHold));
 
-  } else if (type === 'move_mist') {
+  } else if (type === 'movemist') {
     // Mist mode: cabin boy chooses direction, result is private
     const targetHold = value; // 'english' or 'french'
     const ship = game.getPlayerShip(userId);
