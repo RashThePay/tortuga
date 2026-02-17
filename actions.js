@@ -96,9 +96,9 @@ async function startGame(ctx) {
   for (const [userId, p] of game.players) {
     let text;
     if (p.team === 'dutch') {
-      text = msg.dutchDM;
+      text = msg.dutchDM(game.mistMode);
     } else if (p.team === 'spanish') {
-      text = msg.spanishDM;
+      text = msg.spanishDM(game.mistMode);
     } else {
       text = msg.teamDM(p.team);
     }

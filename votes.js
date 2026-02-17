@@ -272,7 +272,7 @@ async function handleLootCallback(ctx) {
 
   await ctx.telegram.sendMessage(
     game.chatId,
-    msg.treasureCaptured(ship, hold),
+    game.mistMode ? msg.treasureCapturedMistMode(ship) : msg.treasureCaptured(ship, hold),
     { parse_mode: 'Markdown' }
   );
 
@@ -357,7 +357,7 @@ async function sendDayStart(ctx, game) {
   );
   try {
     await ctx.telegram.pinChatMessage(game.chatId, gameStateMessage.message_id)
-  } catch {}
+  } catch { }
 }
 
 async function endGame(ctx, game) {
