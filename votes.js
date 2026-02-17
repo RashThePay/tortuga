@@ -23,7 +23,7 @@ async function endDay(ctx, game) {
   // Send DMs with vote keyboards
   for (let i = 0; i < game.pendingEvents.length; i++) {
     const ev = game.pendingEvents[i];
-    if (ev.cancelled) continue;
+    if (ev.cancelled || ev.autoResolved) continue;
 
     const voters = game.expectedVoters.get(i);
 
@@ -146,10 +146,21 @@ async function resolveAllEvents(ctx, game) {
       continue;
     }
 
+    if (ev.autoResolved) {
+      // Mutiny succeeded because captain fled
+      await ctx.telegram.sendMessage(
+        chatId,
+        msg.mutinyAutoSucceeded(ev.ship),
+        { parse_mode: 'Markdown' }
+      );
+      mutinySucceeded.add(ev.ship);
+      continue;
+    }
+
     const result = game.resolveMutiny(i);
     await ctx.telegram.sendMessage(
       chatId,
-      msg.mutinyResult(result.success, result.forV, result.against),
+      msg.mutinyResult(result.success, result.forV, result.against, result.ship),
       { parse_mode: 'Markdown' }
     );
 
@@ -180,7 +191,7 @@ async function resolveAllEvents(ctx, game) {
       const result = game.resolveAttack(i);
       await ctx.telegram.sendMessage(
         chatId,
-        msg.attackResult(result.success, result.charges, result.fires, result.waters),
+        msg.attackResult(result.success, result.charges, result.fires, result.waters, result.ship),
         { parse_mode: 'Markdown' }
       );
 
@@ -292,7 +303,7 @@ async function handleLootCallback(ctx) {
       const result = game.resolveAttack(i);
       await ctx.telegram.sendMessage(
         chatId,
-        msg.attackResult(result.success, result.charges, result.fires, result.waters),
+        msg.attackResult(result.success, result.charges, result.fires, result.waters, result.ship),
         { parse_mode: 'Markdown' }
       );
       if (result.success) {
@@ -341,7 +352,7 @@ async function sendDayStart(ctx, game) {
   );
   await ctx.telegram.sendMessage(
     game.chatId,
-    msg.dayStart(game.round),
+    msg.dayStart(game.round, game.mistMode),
     { parse_mode: 'Markdown' }
   );
   try {

@@ -5,11 +5,11 @@ class GameState {
     this.round = 0;
     this.players = new Map(); // userId -> { id, name, team, location, expelledFrom: [] }
     this.lobbyPlayers = []; // [{ id, name }] before game starts
+    this.mistMode = false; // Mist mode: hidden treasure breakdown
     this.locations = {
       flyingDutchman: { crew: [], holds: { english: 0, french: 0 } },
       jollyRoger: { crew: [], holds: { english: 0, french: 0 } },
       island: { residents: [], treasures: { english: 1, french: 1 } },
-      rowboat: [],
       spanishShip: { treasures: 4 },
     };
     this.pendingEvents = []; // [{ type, ship?, initiator?, target? }]
@@ -20,6 +20,7 @@ class GameState {
     this.armadaCalled = false;
     this.disputeThisRound = false;
     this.setupPending = new Set(); // captains who still need to place initial treasure
+    this.successfulAttackShips = new Set(); // ships that had successful attacks this round
   }
 
   addLobbyPlayer(id, name) {
@@ -107,12 +108,13 @@ class GameState {
     this.votes.clear();
     this.expectedVoters.clear();
     this.disputeThisRound = false;
+    this.successfulAttackShips.clear(); // Reset attack tracking for the new day
 
     // Clear expulsion history from 2+ rounds ago (keep only current and previous round)
     for (const [, p] of this.players) {
       if (p.expelledFrom && p.expelledFrom.length > 0) {
         // Keep only the most recent expulsion
-        p.expelledFrom = p.expelledFrom.slice(-1);
+        p.expelledFrom =p.expelledFrom.slice(-1);
       }
     }
   }
@@ -171,11 +173,6 @@ class GameState {
     return residents.length > 0 && residents[0] === userId;
   }
 
-  isOnRowboat(userId) {
-    const p = this.players.get(userId);
-    return p && p.location === 'rowboat';
-  }
-
   canMoveTo(userId, destination) {
     const p = this.players.get(userId);
     if (!p) return false;
@@ -186,13 +183,6 @@ class GameState {
     }
 
     return true;
-  }
-
-  boardRowboat(userId) {
-    const p = this.players.get(userId);
-    this.removeFromLocation(userId);
-    this.locations.rowboat.push(userId);
-    p.location = 'rowboat';
   }
 
   disembark(userId, destination) {
@@ -220,8 +210,6 @@ class GameState {
       this.locations[loc].crew = this.locations[loc].crew.filter((id) => id !== userId);
     } else if (loc === 'island') {
       this.locations.island.residents = this.locations.island.residents.filter((id) => id !== userId);
-    } else if (loc === 'rowboat') {
-      this.locations.rowboat = this.locations.rowboat.filter((id) => id !== userId);
     }
   }
 
@@ -233,21 +221,7 @@ class GameState {
     p.location = 'island';
 
     // Track expulsion to prevent immediate return
-    if (expelled && fromLocation && fromLocation !== 'rowboat' && fromLocation !== 'island') {
-      if (!p.expelledFrom) p.expelledFrom = [];
-      p.expelledFrom.push(fromLocation);
-    }
-  }
-
-  sendToRowboat(userId, expelled = false) {
-    const p = this.players.get(userId);
-    const fromLocation = p.location;
-    this.removeFromLocation(userId);
-    this.locations.rowboat.push(userId);
-    p.location = 'rowboat';
-
-    // Track expulsion to prevent immediate return
-    if (expelled && fromLocation && fromLocation !== 'rowboat' && fromLocation !== 'island') {
+    if (expelled && fromLocation && fromLocation !== 'island') {
       if (!p.expelledFrom) p.expelledFrom = [];
       p.expelledFrom.push(fromLocation);
     }
@@ -272,17 +246,22 @@ class GameState {
         }
       } else if (ev.type === 'mutiny') {
         const crew = this.locations[ev.ship].crew;
-        const captain = crew[0];
-        const nonCaptainCrew = crew.filter(id => id !== captain);
-        if (nonCaptainCrew.length < 2) {
+        // If ship has no crew or captain is no longer captain (not at index 0), cancel mutiny
+        if (crew.length === 0 || crew.length < 2) {
           ev.cancelled = true;
         } else {
-          for (const id of nonCaptainCrew) voters.add(id);
+          const captain = crew[0];
+          const nonCaptainCrew = crew.filter(id => id !== captain);
+          if (nonCaptainCrew.length < 2) {
+            ev.cancelled = true;
+          } else {
+            for (const id of nonCaptainCrew) voters.add(id);
+          }
         }
       } else if (ev.type === 'dispute') {
         for (const id of this.locations.island.residents) voters.add(id);
       }
-      // 'maroon' type has no voting - it just gets resolved during night
+      // 'maroon' and 'inspect' types have no voting - they just get resolved during night
       this.expectedVoters.set(i, voters);
       this.votes.set(i, new Map());
     }
@@ -327,6 +306,7 @@ class GameState {
   }
 
   applyAttackSuccess(ship, hold) {
+    this.successfulAttackShips.add(ship); // Mark this ship as having had a successful attack
     const ev = this.pendingEvents.find(e => e.type === 'attack' && e.ship === ship);
     const target = ev?.target || 'spanishShip';
     if (target === 'spanishShip') {

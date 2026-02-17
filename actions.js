@@ -11,7 +11,7 @@ function getVotes() {
 
 async function sendDM(ctx, userId, text, extra) {
   try {
-    await ctx.telegram.sendMessage(userId, text, { parse_mode: 'Markdown', ...extra });
+    await ctx.telegram.sendMessage(userId, text, { parse_mode: 'Markdown', protect_content: true, ...extra });
     return true;
   } catch {
     return false;
@@ -32,8 +32,16 @@ async function newGame(ctx) {
   if (existing && existing.phase !== 'ended') {
     return ctx.reply(msg.alreadyRunning);
   }
+  if (ctx.chat.type === 'private') {
+    return ctx.reply('⚠️ این دستور را باید در گروهی که می‌خواهید بازی کنید بفرستید.');
+  }
   createGame(chatId);
-  return ctx.reply(msg.newGame, { parse_mode: 'Markdown' });
+  
+  const keyboard = Markup.inlineKeyboard([
+    Markup.button.callback('عادی', 'newgame_normal'),
+    Markup.button.callback('🌫️ مه‌گرفتگی', 'newgame_mist'),
+  ]);
+  return ctx.reply(msg.newGameMode, keyboard);
 }
 
 // /join
@@ -131,14 +139,8 @@ async function moveLocation(ctx) {
 
   const buttons = [];
 
-  // From ship -> can go to island or other ship
+  // From ship -> can go to island only
   if (currentLoc === 'flyingDutchman' || currentLoc === 'jollyRoger') {
-    const otherShip = currentLoc === 'flyingDutchman' ? 'jollyRoger' : 'flyingDutchman';
-
-    if (game.canMoveTo(userId, otherShip) && game.locations[otherShip].crew.length < 5) {
-      buttons.push(Markup.button.callback(LOCATION_NAMES[otherShip], `act_moveloc_${userId}_${otherShip === 'flyingDutchman' ? 'fd' : 'jr'}`));
-    }
-
     if (game.canMoveTo(userId, 'island')) {
       buttons.push(Markup.button.callback(LOCATION_NAMES.island, `act_moveloc_${userId}_island`));
     }
@@ -159,45 +161,6 @@ async function moveLocation(ctx) {
   }
 
   return ctx.reply(msg.chooseMoveDest, Markup.inlineKeyboard(buttons, { columns: 1 }));
-}
-
-// Keep old board/disembark for backward compatibility (will be deprecated)
-async function board(ctx) {
-  const game = getGame(ctx.chat.id);
-  if (!game) return ctx.reply(msg.noGame);
-  if (game.phase !== 'day') return ctx.reply(msg.gameNotDay);
-
-  const userId = ctx.from.id;
-  const p = game.players.get(userId);
-  if (!p) return ctx.reply(msg.notInGame);
-  if (game.usedAction.has(userId)) return ctx.reply(msg.alreadyActed);
-  if (game.isOnRowboat(userId)) return ctx.reply(msg.alreadyOnRowboat);
-
-  game.boardRowboat(userId);
-  game.markAction(userId);
-  await ctx.reply(msg.boardedRowboat(p.name));
-  await checkDayEnd(ctx, game);
-}
-
-async function disembark(ctx) {
-  const game = getGame(ctx.chat.id);
-  if (!game) return ctx.reply(msg.noGame);
-  if (game.phase !== 'day') return ctx.reply(msg.gameNotDay);
-
-  const userId = ctx.from.id;
-  const p = game.players.get(userId);
-  if (!p) return ctx.reply(msg.notInGame);
-  if (game.usedAction.has(userId)) return ctx.reply(msg.alreadyActed);
-  if (!game.isOnRowboat(userId)) return ctx.reply(msg.notOnRowboat);
-
-  const buttons = [];
-  if (game.locations.flyingDutchman.crew.length < 5)
-    buttons.push(Markup.button.callback(LOCATION_NAMES.flyingDutchman, `act_disembark_${userId}_fd`));
-  if (game.locations.jollyRoger.crew.length < 5)
-    buttons.push(Markup.button.callback(LOCATION_NAMES.jollyRoger, `act_disembark_${userId}_jr`));
-  buttons.push(Markup.button.callback(LOCATION_NAMES.island, `act_disembark_${userId}_island`));
-
-  return ctx.reply(msg.chooseDisembark, Markup.inlineKeyboard(buttons, { columns: 1 }));
 }
 
 // /attack - captain orders attack
@@ -301,10 +264,52 @@ async function mutiny(ctx) {
   if (game.pendingEvents.some((e) => e.type === 'mutiny' && e.ship === ship)) {
     return ctx.reply(msg.mutinyAlreadyPending);
   }
+  
+  // In mist mode, first mate can only do one action: mutiny or inspect
+  if (game.mistMode && game.pendingEvents.some((e) => e.type === 'inspect' && e.ship === ship)) {
+    return ctx.reply(msg.alreadyActedAsFirstMate);
+  }
 
   game.addPendingEvent({ type: 'mutiny', ship, initiator: userId });
   game.markAction(userId);
   await ctx.reply(msg.mutinyStarted(p.name, ship));
+  await checkDayEnd(ctx, game);
+}
+
+// /inspect - first mate inspects holds in mist mode
+async function inspect(ctx) {
+  const game = getGame(ctx.chat.id);
+  if (!game) return ctx.reply(msg.noGame);
+  if (game.phase !== 'day') return ctx.reply(msg.gameNotDay);
+  if (!game.mistMode) return ctx.reply(msg.inspectNotInMistMode);
+
+  const userId = ctx.from.id;
+  const p = game.players.get(userId);
+  if (!p) return ctx.reply(msg.notInGame);
+  if (game.usedAction.has(userId)) return ctx.reply(msg.alreadyActed);
+
+  const ship = game.getPlayerShip(userId);
+  if (!ship) return ctx.reply(msg.notOnShip);
+  if (!game.isFirstMate(userId)) return ctx.reply(msg.notFirstMate);
+
+  // Only one action per first mate per ship per round
+  if (game.pendingEvents.some((e) => e.type === 'mutiny' && e.ship === ship)) {
+    return ctx.reply(msg.alreadyActedAsFirstMate);
+  }
+  if (game.pendingEvents.some((e) => e.type === 'inspect' && e.ship === ship)) {
+    return ctx.reply(msg.alreadyActedAsFirstMate);
+  }
+
+  // Inspect the holds
+  const holds = game.locations[ship].holds;
+  const inspectText = `📊 *بررسی انبار* (${shipLabel(ship)}):\n🇬🇧: ${holds.english.toLocaleString("fa-IR")}\n🇫🇷: ${holds.french.toLocaleString("fa-IR")}`;
+  
+  // Send privately to first mate
+  await sendDM(ctx, userId, inspectText);
+  
+  game.addPendingEvent({ type: 'inspect', ship, initiator: userId });
+  game.markAction(userId);
+  await ctx.reply(msg.inspectOrdered(p.name, ship));
   await checkDayEnd(ctx, game);
 }
 
@@ -323,8 +328,27 @@ async function moveTreasure(ctx) {
   if (!ship) return ctx.reply(msg.notOnShip);
   if (!game.isCabinBoy(userId)) return ctx.reply(msg.notCabinBoy);
 
+  // Prevent cabin boy from moving treasure if there was a successful attack this round
+  if (game.successfulAttackShips.has(ship)) {
+    return ctx.reply(msg.cabinBoyBlockedByAttack);
+  }
+
   const holds = game.locations[ship].holds;
-  if (holds.english + holds.french === 0) return ctx.reply(msg.noTreasureToMove('english'));
+  const total = holds.english + holds.french;
+  
+  if (game.mistMode) {
+    // In mist mode, show direction buttons regardless of whether there's treasure
+    if (total === 0) return ctx.reply(msg.noTreasureToMove('english'));
+    
+    const buttons = [
+      Markup.button.callback('🇬🇧 → 🇫🇷', `act_move_mist_${userId}_french`),
+      Markup.button.callback('🇫🇷 → 🇬🇧', `act_move_mist_${userId}_english`),
+    ];
+    return ctx.reply(msg.chooseMoveDirection, Markup.inlineKeyboard(buttons, { columns: 1 }));
+  }
+  
+  // Normal mode
+  if (total === 0) return ctx.reply(msg.noTreasureToMove('english'));
 
   const buttons = [];
   if (holds.french > 0)
@@ -452,6 +476,24 @@ async function handleActionCallback(ctx) {
       }
     }
 
+    // Check if captain is leaving with a pending mutiny - mutiny succeeds automatically
+    const currentShip = game.getPlayerShip(userId);
+    let mutinyAutoResolved = false;
+    if (game.isCaptain(userId) && currentShip && dest !== currentShip) {
+      const mutinyEvent = game.pendingEvents.find((e) => e.type === 'mutiny' && e.ship === currentShip);
+      if (mutinyEvent) {
+        // Captain is leaving so mutiny succeeds automatically
+        mutinyEvent.autoResolved = true; // Mark for special handling
+        game.sendToIsland(userId, true); // Mark as expelled
+        game.markAction(userId);
+        await ctx.answerCbQuery('✅');
+        await ctx.deleteMessage();
+        await ctx.telegram.sendMessage(chatId, msg.captainLeftDuringMutiny(p.name, currentShip));
+        await checkDayEnd(ctx, game);
+        return;
+      }
+    }
+
     // Perform move
     game.removeFromLocation(userId);
     if (dest === 'island') {
@@ -465,19 +507,6 @@ async function handleActionCallback(ctx) {
     await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();
     await ctx.telegram.sendMessage(chatId, msg.movedTo(p.name, dest));
-
-  } else if (type === 'disembark') {
-    const dest = SHIP_SHORT[value];
-    if (!dest) return ctx.answerCbQuery('⚠️');
-    const ok = game.disembark(userId, dest);
-    if (!ok) {
-      await ctx.answerCbQuery(msg.locationFull(dest));
-      return;
-    }
-    game.markAction(userId);
-    await ctx.answerCbQuery('✅');
-    await ctx.deleteMessage();
-    await ctx.telegram.sendMessage(chatId, msg.disembarked(p.name, dest));
 
   } else if (type === 'move') {
     const targetHold = value; // 'english' or 'french'
@@ -494,6 +523,31 @@ async function handleActionCallback(ctx) {
     await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();
     await ctx.telegram.sendMessage(chatId, msg.treasureMoved(p.name, ship, targetHold));
+
+  } else if (type === 'move_mist') {
+    // Mist mode: cabin boy chooses direction, result is private
+    const targetHold = value; // 'english' or 'french'
+    const ship = game.getPlayerShip(userId);
+    const holds = game.locations[ship].holds;
+    const sourceHold = targetHold === 'english' ? 'french' : 'english';
+    
+    let success = false;
+    let resultMessage = '';
+    if (holds[sourceHold] > 0) {
+      holds[sourceHold]--;
+      holds[targetHold]++;
+      success = true;
+      resultMessage = msg.treasureMovedSuccess(targetHold);
+    } else {
+      resultMessage = msg.treasureMovedFailed;
+    }
+    
+    game.markAction(userId);
+    await ctx.answerCbQuery(resultMessage);
+    await ctx.deleteMessage();
+    // Publicly announce only the attempt
+    const direction = sourceHold === 'english' ? '🇬🇧 → 🇫🇷' : '🇫🇷 → 🇬🇧';
+    await ctx.telegram.sendMessage(chatId, msg.treasureMoveAttempt(p.name, ship, direction));
 
   } else if (type === 'attackhold') {
     const hold = value; // 'english' or 'french'
@@ -529,8 +583,26 @@ async function handleActionCallback(ctx) {
   await checkDayEnd(ctx, game);
 }
 
+// Handle newgame mode selection
+async function handleNewgameModeCallback(ctx) {
+  const data = ctx.callbackQuery.data;
+  const game = getGame(ctx.chat.id);
+  if (!game || game.phase !== 'lobby') {
+    return ctx.answerCbQuery('⚠️ بازی در مرحله لابی نیست.');
+  }
+
+  if (data === 'newgame_normal') {
+    game.mistMode = false;
+  } else if (data === 'newgame_mist') {
+    game.mistMode = true;
+  }
+
+  await ctx.answerCbQuery('✅');
+  await ctx.editMessageText(msg.newGame(game.mistMode), { parse_mode: 'Markdown' });
+}
+
 module.exports = {
-  newGame, join, startGame, board, disembark, moveLocation, attack, maroon,
-  mutiny, moveTreasure, callArmada, dispute, pass, status, sendDM,
-  handleActionCallback, checkDayEnd,
+  newGame, join, startGame, moveLocation, attack, maroon,
+  mutiny, inspect, moveTreasure, callArmada, dispute, pass, status, sendDM,
+  handleActionCallback, handleNewgameModeCallback, checkDayEnd,
 };

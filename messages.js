@@ -7,7 +7,7 @@ const TEAM_NAMES = {
 
 const LOCATION_NAMES = {
   flyingDutchman: '🏴‍☠️ فلاینگ داچمن',
-  jollyRoger: '🏴‍☠️ جالی راجر',
+  jollyRoger: '☠ جالی راجر',
   island: '🏝️ جزیره',
   rowboat: '🛶 قایق',
 };
@@ -27,7 +27,9 @@ function shipLabel(loc) {
 }
 
 const msg = {
-  newGame: '🏴‍☠️ *بازی جدید جزیره‌ی گنج!*\nبرای پیوستن /join بزنید.\nبرای شروع بازی /start بزنید.',
+  newGameMode: '🏴‍☠️ حالت بازی را انتخاب کنید:',
+  newGame: (mist = false) => 
+    `🏴‍☠️ *بازی جدید جزیره‌ی گنج!*${mist ? ' 🌫️ مه‌گرفتگی' : ''}\nبرای پیوستن /join بزنید.\nبرای شروع بازی /start بزنید.`,
   alreadyRunning: '⚠️ یک بازی در حال اجراست.',
   noGame: '⚠️ هیچ بازی‌ای وجود ندارد. با /newgame بازی جدید بسازید.',
   joined: (name) => `✅ ‏${name} به بازی پیوست!`,
@@ -70,13 +72,14 @@ const msg = {
   treasurePlaced: (ship, hold) =>
     `✅ گنج اولیه‌ی ${shipLabel(ship)} در انبار ${TEAM_NAMES[hold]} قرار گرفت.`,
 
-  dayStart: (round) =>
+  dayStart: (round, mistMode = false) =>
     `☀️ *راند ${round.toLocaleString("fa-IR")} - فاز روز*\n\n` +
     `*اقدامات:*\n` +
     `/jump - حرکت به مکان دیگر\n` +
     `/attack - دستور حمله (ناخدا)\n` +
     `/maroon - فرستادن به خشکی (ناخدا)\n` +
     `/mutiny - شورش (معاون)\n` +
+    (mistMode ? `/inspect - بررسی انبار (معاون)\n` : ``) +
     `/replace - جابه‌جایی گنج (پادو)\n` +
     `/dispute - منازعه (جزیره)\n` +
     `/callarmada - خبر کردن ناوگان (حاکم، راند ۶+)\n` +
@@ -120,10 +123,27 @@ const msg = {
 
   mutinyStarted: (name, ship) =>
     `⚔️ ‏${name} (معاون ${shipLabel(ship)}) شورش به‌پا کرد!`,
+  cantLeaveWithMutiny: '⚠️ این اقدام باعث می‌شود شما شورش را ببازید (اگر حرکت کنید، شورش موفق است)!',
+  captainLeftDuringMutiny: (name, ship) =>
+    `⚔️ ناخدای ${shipLabel(ship)} (‏${name}) در زمان شورش کشتی را ترک کرد!\n✅ *شورش موفق شد* و ناخدا برای راند بعد نمی‌تواند به این کشتی برگردد.`,
+  mutinyAutoSucceeded: (ship) =>
+    `✅ شورش علیه ناخدای ${shipLabel(ship)} موفق بود (ناخدا کشتی را ترک کرد).`,
 
   treasureMoved: (name, ship, hold) =>
     `💰 ‏${name} (پادوی ${shipLabel(ship)}) یک گنج به انبار ${TEAM_NAMES[hold]} منتقل کرد.`,
   noTreasureToMove: (hold) => `⚠️ انبار ${TEAM_NAMES[hold]} خالی است.`,
+  cabinBoyBlockedByAttack: '⚠️ پادو نمی‌تواند پس از حمله‌ی موفق گنج جابه‌جا کند!',
+  
+  chooseMoveDirection: '🌫️ جهت جابه‌جایی را انتخاب کنید:',
+  treasureMovedSuccess: (hold) => `✅ گنج به انبار ${TEAM_NAMES[hold]} منتقل شد.`,
+  treasureMovedFailed: `❌ هیچ گنجی برای جابه‌جایی موجود نیست.`,
+  treasureMoveAttempt: (name, ship, direction) =>
+    `💰 ‏${name} (پادوی ${shipLabel(ship)}) تلاش کرد گنجی را منتقل کند.`,
+
+  inspectOrdered: (name, ship) =>
+    `🔍 ‏${name} (معاون ${shipLabel(ship)}) انبار را بررسی کرد.`,
+  inspectNotInMistMode: '⚠️ بررسی انبار فقط در مه‌گرفتگی ممکن است.',
+  alreadyActedAsFirstMate: '⚠️ معاون قبلاً در این راند اقدام کرده است (یک اقدام برای معاون مجاز است).',
 
   armadaCalled: (name) =>
     `🚨 ‏${name} (حاکم جزیره) ناوگان اسپانیا را خبر کرد!\nبازی بعد از فاز شب امشب تمام می‌شود.`,
@@ -133,7 +153,7 @@ const msg = {
     `⚖️ ‏${name} منازعه بر سر گنج‌های جزیره به‌پا کرد!`,
   disputeAlreadyPending: '⚠️ در این راند قبلاً منازعه شده.',
 
-  passed: (name) => `⏭ ‏${name} پاس داد.`,
+  passed: (name) => `⏭ ‏${name} پاس داد. (می‌تواند با یک اقدام دیگر آن را لغو کند)`,
   alreadyPassed: '⚠️ شما قبلاً پاس داده‌اید. می‌توانید با یک اقدام دیگر آن را لغو کنید.',
 
   nightStart: '🌙 *فاز شب*\nرای‌گیری مخفیانه شروع شد.',
@@ -154,8 +174,8 @@ const msg = {
   voteRecorded: '✅ رای شما ثبت شد.',
   alreadyVoted: '⚠️ شما قبلاً رای داده‌اید.',
 
-  attackResult: (success, charges, fires, waters) =>
-    `⚔️ *نتیجه‌ی حمله:* ${success ? '✅ موفق!' : '❌ ناموفق!'}\n` +
+  attackResult: (success, charges, fires, waters, ship) =>
+    `⚔️ *نتیجه‌ی حمله* (${shipLabel(ship)}): ${success ? '✅ موفق!' : '❌ ناموفق!'}\n` +
     `یورش: ${charges.toLocaleString("fa-IR")} | آتش: ${fires.toLocaleString("fa-IR")} | خاموش: ${waters.toLocaleString("fa-IR")}`,
 
   captainChooseHold: '💰 حمله موفق بود! گنج را در کدام انبار بگذاریم؟',
@@ -163,15 +183,15 @@ const msg = {
   treasureCaptured: (ship, hold) =>
     `💰 یک گنج از کشتی اسپانیایی دزدیده شد و در انبار ${TEAM_NAMES[hold]} ${shipLabel(ship)} قرار گرفت!`,
 
-  mutinyResult: (success, forV, against) =>
-    `⚔️ *نتیجه‌ی شورش:* ${success ? '✅ موفق! ناخدا عزل شد.' : '❌ ناموفق!'}\n` +
+  mutinyResult: (success, forV, against, ship) =>
+    `⚔️ *نتیجه‌ی شورش* (${shipLabel(ship)}): ${success ? '✅ موفق! ناخدا عزل شد.' : '❌ ناموفق!'}\n` +
     `موافق: ${forV.toLocaleString("fa-IR")} | مخالف: ${against.toLocaleString("fa-IR")}`,
 
   disputeResult: (engVotes, frVotes) => {
     let result;
     if (engVotes > frVotes) result = 'هر دو گنج به ناحیه‌ی انگلیسی رفت.';
     else if (frVotes > engVotes) result = 'هر دو گنج به ناحیه‌ی فرانسوی رفت.';
-    else result = 'مساوی! هر ناحیه یک گنج دارد.';
+    else result = 'مساوی! هر ناحیه یک گنج گرفت.';
     return `⚖️ *نتیجه‌ی منازعه:*\n🇬🇧 انگلیس: ${engVotes.toLocaleString("fa-IR")} | 🇫🇷 فرانسه: ${frVotes.toLocaleString("fa-IR")}\n${result}`;
   },
 
@@ -206,7 +226,9 @@ const msg = {
       : `🇪🇸 بازیکن اسپانیایی *بازنده* شد.`,
 
   status: (state) => {
-    const lines = [`📊 *وضعیت بازی - راند ${state.round.toLocaleString("fa-IR")}*\n`];
+    const lines = [`📊 *وضعیت بازی - راند ${state.round.toLocaleString("fa-IR")}*`];
+    if (state.mistMode) lines.push('🌫️ *مه‌گرفتگی*');
+    lines.push('');
 
     lines.push(`*${LOCATION_NAMES.flyingDutchman}:*`);
     lines.push(formatShipStatus(state, 'flyingDutchman'));
@@ -217,7 +239,6 @@ const msg = {
     lines.push(`*${LOCATION_NAMES.island}:*`);
     lines.push(formatIslandStatus(state));
     lines.push('');
-    lines.push(`*🚣 قایق:* ${state.locations.rowboat.map((id) => state.players.get(id).name).join('، ') || 'خالی'}`);
     lines.push(`*🚢 کشتی اسپانیایی:* ${state.locations.spanishShip.treasures.toLocaleString("fa-IR")} گنج`);
 
     return lines.join('\n');
@@ -261,10 +282,19 @@ function formatShipStatus(state, shipKey) {
     if (loc.crew.length === 1 && i === 0) role = ' (ناخدا/پادو)';
     return `  ${(i + 1).toLocaleString("fa-IR")}. ‏${p.name}${role}`;
   });
+  
+  let treasureLine;
+  if (state.mistMode) {
+    const total = loc.holds.english + loc.holds.french;
+    treasureLine = `  💰 کل: ${total.toLocaleString("fa-IR")} گنج (🌫️)`;
+  } else {
+    treasureLine = `  💰 🇬🇧: ${loc.holds.english.toLocaleString("fa-IR")} گنج | 🇫🇷: ${loc.holds.french.toLocaleString("fa-IR")} گنج`;
+  }
+  
   return (
     crewNames.join('\n') +
     (crewNames.length === 0 ? '  خالی' : '') +
-    `\n  💰 انگلیسی: ${loc.holds.english.toLocaleString("fa-IR")} | فرانسوی: ${loc.holds.french.toLocaleString("fa-IR")}`
+    '\n' + treasureLine
   );
 }
 
@@ -277,7 +307,7 @@ function formatIslandStatus(state) {
   });
   return (
     (resNames.length > 0 ? resNames.join('\n') : '  خالی') +
-    `\n  💰 انگلیسی: ${loc.treasures.english.toLocaleString("fa-IR")} | فرانسوی: ${loc.treasures.french.toLocaleString("fa-IR")}`
+    `\n  💰 🇬🇧: ${loc.treasures.english.toLocaleString("fa-IR")} | 🇫🇷: ${loc.treasures.french.toLocaleString("fa-IR")}`
   );
 }
 
