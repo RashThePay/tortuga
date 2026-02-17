@@ -15,6 +15,10 @@ bot.command('start', (ctx) => {
   }
   return actions.startGame(ctx);
 });
+bot.command('leave', (ctx) => actions.leave(ctx));
+bot.command('endgame', (ctx) => actions.endGame(ctx));
+bot.command('players', (ctx) => actions.listPlayers(ctx));
+bot.command('help', (ctx) => actions.sendHelp(ctx));
 
 // Day phase commands
 bot.command('jump', (ctx) => actions.moveLocation(ctx));

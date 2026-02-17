@@ -28,7 +28,9 @@ class GameState {
     this.lobbyPlayers.push({ id, name });
     return true;
   }
-
+  removeLobbyPlayer(id) { 
+    this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.id !== id);
+  }
   startGame() {
     const players = [...this.lobbyPlayers];
     shuffle(players);

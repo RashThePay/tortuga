@@ -33,6 +33,7 @@ const msg = {
   alreadyRunning: '⚠️ یک بازی در حال اجراست.',
   noGame: '⚠️ هیچ بازی‌ای وجود ندارد. با /newgame بازی جدید بسازید.',
   joined: (name) => `✅ ‏${name} به بازی پیوست!`,
+  left: (name) => `👋 ‏${name} از بازی خارج شد.`,
   alreadyJoined: '⚠️ شما قبلاً به بازی پیوسته‌اید.',
   notInGame: '⚠️ شما در این بازی نیستید.',
   needMorePlayers: '⚠️ حداقل ۴ بازیکن لازم است.',
@@ -274,13 +275,14 @@ function formatShipStatus(state, shipKey) {
   const loc = state.locations[shipKey];
   const crewNames = loc.crew.map((id, i) => {
     const p = state.players.get(id);
+    const hasSubmitted = state.usedAction.has(id) ? '✅' : '';
     let role = '';
     if (i === 0) role = ' (ناخدا)';
     else if (i === 1 && loc.crew.length > 2) role = ' (معاون)';
     if (i === loc.crew.length - 1 && loc.crew.length > 1) role = ' (پادو)';
     if (loc.crew.length === 2 && i === 1) role = ' (معاون/پادو)';
     if (loc.crew.length === 1 && i === 0) role = ' (ناخدا/پادو)';
-    return `  ${(i + 1).toLocaleString("fa-IR")}. ‏${p.name}${role}`;
+    return `  ${(i + 1).toLocaleString("fa-IR")}. ‏${p.name}${role} ${hasSubmitted}`;
   });
   
   let treasureLine;
@@ -302,8 +304,9 @@ function formatIslandStatus(state) {
   const loc = state.locations.island;
   const resNames = loc.residents.map((id, i) => {
     const p = state.players.get(id);
+    const hasSubmitted = state.usedAction.has(id) ? '✅' : '';
     let role = i === 0 ? ' (حاکم)' : '';
-    return `  ${(i + 1).toLocaleString("fa-IR")}. ‏${p.name}${role}`;
+    return `  ${(i + 1).toLocaleString("fa-IR")}. ‏${p.name}${role} ${hasSubmitted}`;
   });
   return (
     (resNames.length > 0 ? resNames.join('\n') : '  خالی') +

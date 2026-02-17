@@ -1,5 +1,5 @@
 const { Markup } = require('telegraf');
-const { getGame, createGame, findGameByPlayer } = require('./game');
+const { getGame, createGame, findGameByPlayer, deleteGame } = require('./game');
 const { msg, SHIP_SHORT, shipLabel, LOCATION_NAMES, TEAM_NAMES } = require('./messages');
 
 // Lazy require to avoid circular dependency
@@ -36,7 +36,7 @@ async function newGame(ctx) {
     return ctx.reply('⚠️ این دستور را باید در گروهی که می‌خواهید بازی کنید بفرستید.');
   }
   createGame(chatId);
-  
+
   const keyboard = Markup.inlineKeyboard([
     Markup.button.callback('عادی', 'newgame_normal'),
     Markup.button.callback('🌫️ مه‌گرفتگی', 'newgame_mist'),
@@ -121,6 +121,46 @@ async function startGame(ctx) {
   if (jrCaptain) {
     await sendDM(ctx, jrCaptain, msg.captainChooseTreasure('jollyRoger'), keyboard);
   }
+}
+// /leave - leave the game (only in lobby)
+async function leave(ctx) {
+  const game = getGame(ctx.chat.id);
+  if (!game) return ctx.reply(msg.noGame);
+  if (game.phase !== 'lobby') return ctx.reply(msg.gameNotLobby);
+  const userId = ctx.from.id;
+  const p = game.players.get(userId);
+  if (!p) return ctx.reply(msg.notInGame);
+  game.removeLobbyPlayer(userId);
+  return ctx.reply(msg.left(p.name));
+}
+
+async function endGame(ctx) {
+  const game = getGame(ctx.chat.id);
+  if (!game) return ctx.reply(msg.noGame);
+  // just cancel the game in any situation
+  await ctx.reply(msg.gameEnd);
+  deleteGame(ctx.chat.id);
+}
+async function listPlayers(ctx) {
+  const game = getGame(ctx.chat.id);
+  if (!game) return ctx.reply(msg.noGame);
+  if (game.phase === 'lobby') {
+    const names = game.lobbyPlayers.map((p) => p.name).join('، ');
+    return ctx.reply(`🏴‍☠️ لابی بازی\nبازیکنان: ${names || 'هنوز کسی نیست'}\nتعداد: ${game.lobbyPlayers.length}`)
+  };
+  const lines = []; let n = 1;
+  for (const [userId, p] of game.players) {
+    const location = shipLabel(game.getPlayerShip(userId)) || LOCATION_NAMES[p.location] || 'نامشخص';
+    const hasSubmitted = game.usedAction.has(userId) ? '✅' : '❌ (هنوز اقدام نکرده)';
+    lines.push(`${n.toLocaleString("fa-IR")}. ‏${p.name} - ${location} - ${hasSubmitted}`);
+    n++
+  }
+  return ctx.reply(msg.playerStatus(lines.join('\n')), { parse_mode: 'Markdown' });
+}
+
+async function sendHelp(ctx) {
+  // with link to channel in markdown
+  return ctx.reply(`🏴‍☠️ برای دیدن قوانین بازی به [کانال جزیره گنج](https://t.me/jazire_ganj_game/2) مراجعه کنید.`, { parse_mode: 'Markdown', link_preview_options: { disabled: false } });
 }
 
 // /move_location - direct movement from ship to island or island to ship
@@ -264,7 +304,7 @@ async function mutiny(ctx) {
   if (game.pendingEvents.some((e) => e.type === 'mutiny' && e.ship === ship)) {
     return ctx.reply(msg.mutinyAlreadyPending);
   }
-  
+
   // In mist mode, first mate can only do one action: mutiny or inspect
   if (game.mistMode && game.pendingEvents.some((e) => e.type === 'inspect' && e.ship === ship)) {
     return ctx.reply(msg.alreadyActedAsFirstMate);
@@ -303,10 +343,10 @@ async function inspect(ctx) {
   // Inspect the holds
   const holds = game.locations[ship].holds;
   const inspectText = `📊 *بررسی انبار* (${shipLabel(ship)}):\n🇬🇧: ${holds.english.toLocaleString("fa-IR")}\n🇫🇷: ${holds.french.toLocaleString("fa-IR")}`;
-  
+
   // Send privately to first mate
   await sendDM(ctx, userId, inspectText);
-  
+
   game.addPendingEvent({ type: 'inspect', ship, initiator: userId });
   game.markAction(userId);
   await ctx.reply(msg.inspectOrdered(p.name, ship));
@@ -335,18 +375,18 @@ async function moveTreasure(ctx) {
 
   const holds = game.locations[ship].holds;
   const total = holds.english + holds.french;
-  
+
   if (game.mistMode) {
     // In mist mode, show direction buttons regardless of whether there's treasure
     if (total === 0) return ctx.reply(msg.noTreasureToMove('english'));
-    
+
     const buttons = [
       Markup.button.callback('🇬🇧 → 🇫🇷', `act_move_mist_${userId}_french`),
       Markup.button.callback('🇫🇷 → 🇬🇧', `act_move_mist_${userId}_english`),
     ];
     return ctx.reply(msg.chooseMoveDirection, Markup.inlineKeyboard(buttons, { columns: 1 }));
   }
-  
+
   // Normal mode
   if (total === 0) return ctx.reply(msg.noTreasureToMove('english'));
 
@@ -530,7 +570,7 @@ async function handleActionCallback(ctx) {
     const ship = game.getPlayerShip(userId);
     const holds = game.locations[ship].holds;
     const sourceHold = targetHold === 'english' ? 'french' : 'english';
-    
+
     let success = false;
     let resultMessage = '';
     if (holds[sourceHold] > 0) {
@@ -541,7 +581,7 @@ async function handleActionCallback(ctx) {
     } else {
       resultMessage = msg.treasureMovedFailed;
     }
-    
+
     game.markAction(userId);
     await ctx.answerCbQuery(resultMessage);
     await ctx.deleteMessage();
@@ -604,5 +644,5 @@ async function handleNewgameModeCallback(ctx) {
 module.exports = {
   newGame, join, startGame, moveLocation, attack, maroon,
   mutiny, inspect, moveTreasure, callArmada, dispute, pass, status, sendDM,
-  handleActionCallback, handleNewgameModeCallback, checkDayEnd,
+  handleActionCallback, handleNewgameModeCallback, checkDayEnd, leave, endGame, listPlayers, sendHelp,
 };
