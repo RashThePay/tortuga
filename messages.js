@@ -75,8 +75,8 @@ const msg = {
   captainChooseTreasure: (ship) =>
     `⚓ شما ناخدای ${shipLabel(ship)} هستید.\nگنج اولیه‌ی کشتی را در کدام انبار می‌گذارید؟`,
 
-  treasurePlaced: (ship, hold) =>
-    `✅ گنج اولیه‌ی ${shipLabel(ship)} در انبار ${TEAM_NAMES[hold]} قرار گرفت.`,
+  treasurePlaced: (ship, hold, mistMode) =>
+    `✅ گنج اولیه‌ی ${shipLabel(ship)} در انبار ${mistMode? "": TEAM_NAMES[hold]} قرار گرفت.`,
 
   dayStart: (round, mistMode = false) =>
     `☀️ *راند ${round.toLocaleString("fa-IR")} - فاز روز*\n\n` +

@@ -235,15 +235,15 @@ async function attack(ctx) {
     await ctx.reply(msg.attackOtherShip(otherShip));
 
     // Let the caller choose which hold to steal from
-    const buttons = [];
-    if (otherHolds.english > 0)
-      buttons.push(Markup.button.callback(`🇬🇧 انبار انگلیسی`, `act_attackhold_${userId}_english`));
-    if (otherHolds.french > 0)
-      buttons.push(Markup.button.callback(`🇫🇷 انبار فرانسوی`, `act_attackhold_${userId}_french`));
+    // const buttons = [];
+    // if (otherHolds.english > 0)
+    //   buttons.push(Markup.button.callback(`🇬🇧 انبار انگلیسی`, `act_attackhold_${userId}_english`));
+    // if (otherHolds.french > 0)
+    //   buttons.push(Markup.button.callback(`🇫🇷 انبار فرانسوی`, `act_attackhold_${userId}_french`));
 
     // Store context for the callback
-    game._pendingAttackHold = { ship, target, initiator: userId };
-    return ctx.reply(msg.chooseStealHold, Markup.inlineKeyboard(buttons, { columns: 1 }));
+    // game._pendingAttackHold = { ship, target, initiator: userId };
+    // return ctx.reply(msg.chooseStealHold, Markup.inlineKeyboard(buttons, { columns: 1 }));
   }
 
   game.addPendingEvent({ type: 'attack', ship, initiator: userId, target });
@@ -537,7 +537,7 @@ async function handleActionCallback(ctx) {
     
     const previousRanking = game.removeFromLocation(userId);
     if (dest === 'island') {
-      game.locations.island.pendinJoins.push({userId, ranking: previousRanking});
+      game.locations.island.pendingJoins.push({userId, ranking: previousRanking});
     } else {
       game.locations[dest].pendingJoins.push({userId, ranking: previousRanking});
     }

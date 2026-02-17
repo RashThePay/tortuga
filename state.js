@@ -345,7 +345,7 @@ class GameState {
       // Attacking the other pirate ship - use stealFrom chosen at attack time
       const otherShip = target;
       const otherHolds = this.locations[otherShip].holds;
-      const stealFrom = ev?.stealFrom || (otherHolds.english > 0 ? 'english' : 'french');
+      const stealFrom = (hold == "french" ? 'english' : 'french');
       if (otherHolds[stealFrom] > 0) {
         otherHolds[stealFrom]--;
         this.locations[ship].holds[hold]++;
