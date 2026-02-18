@@ -542,7 +542,7 @@ async function handleActionCallback(ctx) {
       game.locations[dest].pendingJoins.push({userId, ranking: previousRanking});
     }
     p.location = dest;
-
+    p.expelledFrom = []; // Clear expulsion history on voluntary move
     game.markAction(userId);
     await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();

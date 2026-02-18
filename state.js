@@ -20,7 +20,7 @@ class GameState {
     this.armadaCalled = false;
     this.disputeThisRound = false;
     this.setupPending = new Set(); // captains who still need to place initial treasure
-    this.successfulAttackShips = new Set(); // ships that had successful attacks this round
+    this.successfulAttackShips = new Set(); // ships that had successful attacks this round and the previous round
   }
 
   addLobbyPlayer(id, name) {
@@ -110,15 +110,14 @@ class GameState {
     this.votes.clear();
     this.expectedVoters.clear();
     this.disputeThisRound = false;
-    this.successfulAttackShips.clear(); // Reset attack tracking for the new day
 
-    // Clear expulsion history from 2+ rounds ago (keep only current and previous round)
-    for (const [, p] of this.players) {
-      if (p.expelledFrom && p.expelledFrom.length > 0) {
-        // Keep only the most recent expulsion
-        p.expelledFrom = p.expelledFrom.slice(-1);
-      }
-    }
+    // // Clear expulsion history from 2+ rounds ago (keep only current and previous round)
+    // for (const [, p] of this.players) {
+    //   if (p.expelledFrom && p.expelledFrom.length > 0) {
+    //     // Keep only the most recent expulsion
+    //     p.expelledFrom = p.expelledFrom.slice(-1);
+    //   }
+    // }
   }
 
   markAction(userId) {
@@ -239,6 +238,8 @@ class GameState {
 
   startNight() {
     this.phase = 'night';
+    
+    this.successfulAttackShips.clear(); // Reset attack tracking for the new night
     // resolve pending joins and give ranks based on previous ranking if applicable
     for (const locKey of ['flyingDutchman', 'jollyRoger', 'island']) {
       const loc = this.locations[locKey];
