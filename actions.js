@@ -534,12 +534,12 @@ async function handleActionCallback(ctx) {
       }
     }
     // Perform move
-    
+
     const previousRanking = game.removeFromLocation(userId);
     if (dest === 'island') {
-      game.locations.island.pendingJoins.push({userId, ranking: previousRanking});
+      game.locations.island.pendingJoins.push({ userId, ranking: previousRanking });
     } else {
-      game.locations[dest].pendingJoins.push({userId, ranking: previousRanking});
+      game.locations[dest].pendingJoins.push({ userId, ranking: previousRanking });
     }
     p.location = dest;
 
@@ -584,6 +584,8 @@ async function handleActionCallback(ctx) {
 
     game.markAction(userId);
     await ctx.answerCbQuery(resultMessage);
+    await sendDM(ctx, userId, resultMessage);
+
     await ctx.deleteMessage();
     // Publicly announce only the attempt
     const direction = sourceHold === 'english' ? '🇬🇧 → 🇫🇷' : '🇫🇷 → 🇬🇧';
