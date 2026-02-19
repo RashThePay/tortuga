@@ -33,7 +33,7 @@ class TreasureIslandBot {
       ctx.reply(`🏴‍☠️ *راهنمای بازی جزیره گنج*
 
 1. ابتدا با دستور /new_game بازی را بسازید.
-2. حالت بازی (عادی یا مه‌گرفتگی) را انتخاب کنید.
+2. حالت بازی (عادی یا مه‌آلود) را انتخاب کنید.
 3. سایر بازیکنان با /join وارد شوند (حداقل ۴ نفر).
 4. با دستور /start بازی را شروع کنید.
 
@@ -70,7 +70,7 @@ class TreasureIslandBot {
 
     this.games.set(chatId, new Game(chatId));
     ctx.reply('🎮 بازی جدید ساخته شد!\nلطفاً حالت بازی را انتخاب کنید:', Markup.inlineKeyboard([
-      [Markup.button.callback('عادی ☀️', 'fog_off'), Markup.button.callback('مه‌گرفتگی 🌫', 'fog_on')]
+      [Markup.button.callback('عادی ☀️', 'fog_off'), Markup.button.callback('مه‌آلود 🌫', 'fog_on')]
     ]));
   }
 
@@ -107,11 +107,11 @@ class TreasureIslandBot {
     }
 
     if (game.fogMode === undefined) {
-        return ctx.reply('لطفاً ابتدا حالت بازی (مه‌گرفتگی یا عادی) را انتخاب کنید.');
+        return ctx.reply('لطفاً ابتدا حالت بازی (مه‌آلود یا عادی) را انتخاب کنید.');
     }
 
     game.startGame(game.fogMode);
-    ctx.reply(`بازی با ${game.players.size} بازیکن شروع شد! (حالت: ${game.fogMode ? 'مه‌گرفتگی' : 'عادی'})`);
+    ctx.reply(`بازی با ${game.players.size} بازیکن شروع شد! (حالت: ${game.fogMode ? 'مه‌آلود' : 'عادی'})`);
     this.announceRoles(game);
     this.startPreGame(game);
   }
@@ -138,7 +138,7 @@ class TreasureIslandBot {
     if (data === 'fog_on' || data === 'fog_off') {
       if (game.phase !== PHASES.LOBBY) return;
       game.fogMode = (data === 'fog_on');
-      await ctx.editMessageText(`حالت بازی انتخاب شد: ${game.fogMode ? 'مه‌گرفتگی 🌫' : 'عادی ☀️'}\nاکنون بازیکنان می‌توانند با /join وارد شوند و سپس یکی از اعضا /start را بزند.`);
+      await ctx.editMessageText(`حالت بازی انتخاب شد: ${game.fogMode ? 'مه‌آلود 🌫' : 'عادی ☀️'}\nاکنون بازیکنان می‌توانند با /join وارد شوند و سپس یکی از اعضا /start را بزند.`);
       return;
     }
 

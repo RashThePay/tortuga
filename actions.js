@@ -39,7 +39,7 @@ async function newGame(ctx) {
 
   const keyboard = Markup.inlineKeyboard([
     Markup.button.callback('عادی', 'newgame_normal'),
-    Markup.button.callback('🌫️ مه‌گرفتگی', 'newgame_mist'),
+    Markup.button.callback('🌫️ مه‌آلود', 'newgame_mist'),
   ]);
   return ctx.reply(msg.newGameMode, keyboard);
 }
