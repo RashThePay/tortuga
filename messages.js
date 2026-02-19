@@ -97,7 +97,9 @@ const msg = {
   notOnRowboat: '⚠️ شما سوار قایق نیستید.',
   disembarked: (name, loc) => `📍 ‏${name} به ${shipLabel(loc)} رفت.`,
   movedTo: (name, loc) => `📍 ‏${name} به ${shipLabel(loc)} حرکت کرد.`,
+  moveChosen: (name, dest) => `📍 ‏${name} انتخاب کرد به ${LOCATION_NAMES[dest]} حرکت کند.`,
   locationFull: (loc) => `⚠️ ${shipLabel(loc)} جا ندارد.`,
+  moveRedirectedToIsland: (name, dest) => `📍 ‏${name} نتوانست به ${shipLabel(dest)} برود (ظرفیت پر شد) و به جزیره رفت.`,
   chooseMoveDest: '📍 به کجا می‌خواهید حرکت کنید؟',
   cannotReturnToExpelled: '⚠️ نمی‌توانید به مکانی که از آن اخراج شده‌اید برگردید.',
   noValidMoveDestinations: '⚠️ هیچ مقصد معتبری برای حرکت وجود ندارد.',
@@ -137,6 +139,8 @@ const msg = {
 
   treasureMoved: (name, ship, hold) =>
     `💰 ‏${name} (پادوی ${shipLabel(ship)}) یک گنج به انبار ${TEAM_NAMES[hold]} منتقل کرد.`,
+  treasureTransferChosen: (name, ship) =>
+    `💰 ‏${name} (پادوی ${shipLabel(ship)}) انتخاب کرد گنج جابه‌جا کند.`,
   noTreasureToMove: (hold) => `⚠️ انبار ${TEAM_NAMES[hold]} خالی است.`,
   cabinBoyBlockedByAttack: '⚠️ پادو نمی‌تواند پس از حمله‌ی موفق گنج جابه‌جا کند!',
   

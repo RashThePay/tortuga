@@ -340,13 +340,7 @@ async function inspect(ctx) {
     return ctx.reply(msg.alreadyActedAsFirstMate);
   }
 
-  // Inspect the holds
-  const holds = game.locations[ship].holds;
-  const inspectText = `📊 *بررسی انبار* (${shipLabel(ship)}):\n🇬🇧: ${holds.english.toLocaleString("fa-IR")}\n🇫🇷: ${holds.french.toLocaleString("fa-IR")}`;
-
-  // Send privately to first mate
-  await sendDM(ctx, userId, inspectText);
-
+  // Defer inspect to day-end resolution (after treasure transfers, so first mate sees post-transfer state)
   game.addPendingEvent({ type: 'inspect', ship, initiator: userId });
   game.markAction(userId);
   await ctx.reply(msg.inspectOrdered(p.name, ship));
@@ -516,80 +510,35 @@ async function handleActionCallback(ctx) {
       }
     }
 
-    // Check if captain is leaving with a pending mutiny - mutiny succeeds automatically
-    const currentShip = game.getPlayerShip(userId);
-    let mutinyAutoResolved = false;
-    if (game.isCaptain(userId) && currentShip && dest !== currentShip) {
-      const mutinyEvent = game.pendingEvents.find((e) => e.type === 'mutiny' && e.ship === currentShip);
-      if (mutinyEvent) {
-        // Captain is leaving so mutiny succeeds automatically
-        mutinyEvent.autoResolved = true; // Mark for special handling
-        game.sendToIsland(userId, true); // Mark as expelled
-        game.markAction(userId);
-        await ctx.answerCbQuery('✅');
-        await ctx.deleteMessage();
-        await ctx.telegram.sendMessage(chatId, msg.captainLeftDuringMutiny(p.name, currentShip));
-        await checkDayEnd(ctx, game);
-        return;
-      }
-    }
-    // Perform move
-
-    const previousRanking = game.removeFromLocation(userId);
-    if (dest === 'island') {
-      game.locations.island.pendingJoins.push({ userId, ranking: previousRanking });
-    } else {
-      game.locations[dest].pendingJoins.push({ userId, ranking: previousRanking });
-    }
-    p.location = dest;
-    p.expelledFrom = []; // Clear expulsion history on voluntary move
+    // Defer move to day-end resolution
+    game.addPendingEvent({ type: 'move', userId, destination: dest });
     game.markAction(userId);
     await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();
-    await ctx.telegram.sendMessage(chatId, msg.movedTo(p.name, dest));
+    await ctx.telegram.sendMessage(chatId, msg.moveChosen(p.name, dest));
 
   } else if (type === 'move') {
     const targetHold = value; // 'english' or 'french'
     const ship = game.getPlayerShip(userId);
-    const holds = game.locations[ship].holds;
-    const sourceHold = targetHold === 'english' ? 'french' : 'english';
-    if (holds[sourceHold] <= 0) {
-      await ctx.answerCbQuery(msg.noTreasureToMove(sourceHold));
-      return;
-    }
-    holds[sourceHold]--;
-    holds[targetHold]++;
+
+    // Defer treasure transfer to day-end resolution
+    game.addPendingEvent({ type: 'treasure_transfer', userId, ship, targetHold, mistMode: false });
     game.markAction(userId);
     await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();
-    await ctx.telegram.sendMessage(chatId, msg.treasureMoved(p.name, ship, targetHold));
+    await ctx.telegram.sendMessage(chatId, msg.treasureTransferChosen(p.name, ship));
 
   } else if (type === 'movemist') {
-    // Mist mode: cabin boy chooses direction, result is private
+    // Mist mode: cabin boy chooses direction, defer resolution
     const targetHold = value; // 'english' or 'french'
     const ship = game.getPlayerShip(userId);
-    const holds = game.locations[ship].holds;
-    const sourceHold = targetHold === 'english' ? 'french' : 'english';
 
-    let success = false;
-    let resultMessage = '';
-    if (holds[sourceHold] > 0) {
-      holds[sourceHold]--;
-      holds[targetHold]++;
-      success = true;
-      resultMessage = msg.treasureMovedSuccess(targetHold);
-    } else {
-      resultMessage = msg.treasureMovedFailed;
-    }
-
+    // Defer treasure transfer to day-end resolution
+    game.addPendingEvent({ type: 'treasure_transfer', userId, ship, targetHold, mistMode: true });
     game.markAction(userId);
-    await ctx.answerCbQuery(resultMessage);
-    await sendDM(ctx, userId, resultMessage);
-
+    await ctx.answerCbQuery('✅');
     await ctx.deleteMessage();
-    // Publicly announce only the attempt
-    const direction = sourceHold === 'english' ? '🇬🇧 → 🇫🇷' : '🇫🇷 → 🇬🇧';
-    await ctx.telegram.sendMessage(chatId, msg.treasureMoveAttempt(p.name, ship, direction));
+    await ctx.telegram.sendMessage(chatId, msg.treasureTransferChosen(p.name, ship));
 
   } else if (type === 'attackhold') {
     const hold = value; // 'english' or 'french'

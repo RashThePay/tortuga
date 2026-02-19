@@ -7,9 +7,9 @@ class GameState {
     this.lobbyPlayers = []; // [{ id, name }] before game starts
     this.mistMode = false; // Mist mode: hidden treasure breakdown
     this.locations = {
-      flyingDutchman: { crew: [], holds: { english: 0, french: 0 }, pendingJoins: [] },
-      jollyRoger: { crew: [], holds: { english: 0, french: 0 }, pendingJoins: [] },
-      island: { residents: [], treasures: { english: 1, french: 1 }, pendingJoins: [] },
+      flyingDutchman: { crew: [], holds: { english: 0, french: 0 } },
+      jollyRoger: { crew: [], holds: { english: 0, french: 0 } },
+      island: { residents: [], treasures: { english: 1, french: 1 } },
       spanishShip: { treasures: 4 },
     };
     this.pendingEvents = []; // [{ type, ship?, initiator?, target? }]
@@ -64,7 +64,7 @@ class GameState {
         name: players[i].name,
         team: teams[i],
         location: null,
-        expelledFrom: [], // Track expelled locations from current and previous round
+        expelledRound: null, // Round number when expelled (blocks all ships for current + previous round)
       });
     }
 
@@ -178,8 +178,10 @@ class GameState {
     const p = this.players.get(userId);
     if (!p) return false;
 
-    // Cannot return to location expelled from in current or previous round
-    if (p.expelledFrom && p.expelledFrom.includes(destination)) {
+    // Expelled players cannot move to ANY ship for current + previous round
+    if ((destination === 'flyingDutchman' || destination === 'jollyRoger') &&
+        p.expelledRound !== null &&
+        (this.round - p.expelledRound) <= 1) {
       return false;
     }
 
@@ -220,15 +222,13 @@ class GameState {
 
   sendToIsland(userId, expelled = false) {
     const p = this.players.get(userId);
-    const fromLocation = p.location;
     this.removeFromLocation(userId);
     this.locations.island.residents.push(userId);
     p.location = 'island';
 
-    // Track expulsion to prevent immediate return
-    if (expelled && fromLocation && fromLocation !== 'island') {
-      if (!p.expelledFrom) p.expelledFrom = [];
-      p.expelledFrom.push(fromLocation);
+    // Track expulsion round to block all ships for current + previous round
+    if (expelled) {
+      p.expelledRound = this.round;
     }
   }
 
@@ -238,34 +238,19 @@ class GameState {
 
   startNight() {
     this.phase = 'night';
-    
+
     this.successfulAttackShips.clear(); // Reset attack tracking for the new night
-    // resolve pending joins and give ranks based on previous ranking if applicable
-    for (const locKey of ['flyingDutchman', 'jollyRoger', 'island']) {
-      const loc = this.locations[locKey];
-      if (loc.pendingJoins.length > 0) {
-        // Sort pending joins by previous ranking (lower is better), 
-        loc.pendingJoins.sort((a, b) => {
-          if (a.ranking === null) return 1;
-          if (b.ranking === null) return -1;
-          // do ties preserve original order? JS sort is stable, so it should
-          return a.ranking - b.ranking;
-        });
-        for (const join of loc.pendingJoins) {
-          if (locKey === 'island') {
-            this.locations.island.residents.push(join.userId);
-          } else {
-            this.locations[locKey].crew.push(join.userId);
-          }
-        }
-        loc.pendingJoins = [];
-      }
-    }
+    // Pending joins are now resolved in resolveDayEndActions (votes.js) before night starts
+
     // Set up voters for each pending event
+    // Note: dispute voters are set up later (after mutiny/maroon resolve) in setupDisputePhase
     for (let i = 0; i < this.pendingEvents.length; i++) {
       const ev = this.pendingEvents[i];
       const voters = new Set();
-      if (ev.type === 'attack') {
+
+      if (ev.autoResolved || ev.cancelled) {
+        // Skip — already resolved or cancelled, empty voters = immediately complete
+      } else if (ev.type === 'attack') {
         const crew = this.locations[ev.ship].crew;
         if (crew.length < 2) {
           ev.cancelled = true;
@@ -274,7 +259,6 @@ class GameState {
         }
       } else if (ev.type === 'mutiny') {
         const crew = this.locations[ev.ship].crew;
-        // If ship has no crew or captain is no longer captain (not at index 0), cancel mutiny
         if (crew.length === 0 || crew.length < 2) {
           ev.cancelled = true;
         } else {
@@ -287,9 +271,9 @@ class GameState {
           }
         }
       } else if (ev.type === 'dispute') {
-        for (const id of this.locations.island.residents) voters.add(id);
+        // Deferred: voters determined after mutiny/maroon resolve so expelled players can vote
       }
-      // 'maroon' and 'inspect' types have no voting - they just get resolved during night
+      // 'maroon' type has no voting — resolved during night
       this.expectedVoters.set(i, voters);
       this.votes.set(i, new Map());
     }

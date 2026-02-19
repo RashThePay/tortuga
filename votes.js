@@ -3,6 +3,98 @@ const { findGameByPlayer, getGame, deleteGame } = require('./game');
 const { msg, shipLabel, TEAM_NAMES } = require('./messages');
 const { sendDM } = require('./actions');
 
+// Resolve non-voting day actions in order: moves, treasure transfers, inspects
+async function resolveDayEndActions(ctx, game) {
+  const chatId = game.chatId;
+  const resolvedMoves = [];
+
+  // Step 1: Resolve moves
+  for (const ev of game.pendingEvents) {
+    if (ev.type !== 'move') continue;
+    const p = game.players.get(ev.userId);
+    if (!p) continue;
+
+    // Captain-leaving-during-mutiny special case:
+    // If captain is leaving a ship that has a pending mutiny, treat as accepting mutiny
+    const currentShip = game.getPlayerShip(ev.userId);
+    if (currentShip && game.isCaptain(ev.userId)) {
+      const hasMutiny = game.pendingEvents.some((e) => e.type === 'mutiny' && e.ship === currentShip);
+      if (hasMutiny) {
+        // Captain expelled — mutiny auto-succeeds
+        game.sendToIsland(ev.userId, true); // sets expelledRound
+        // Mark the mutiny as auto-resolved
+        const mutinyEv = game.pendingEvents.find((e) => e.type === 'mutiny' && e.ship === currentShip);
+        if (mutinyEv) mutinyEv.autoResolved = true;
+        await ctx.telegram.sendMessage(chatId, msg.captainLeftDuringMutiny(p.name, currentShip), { parse_mode: 'Markdown' });
+        continue;
+      }
+    }
+
+    // Normal move: remove from current location, collect for rank-sorted placement
+    const prevRanking = game.removeFromLocation(ev.userId);
+    resolvedMoves.push({ userId: ev.userId, dest: ev.destination, prevRanking, name: p.name });
+  }
+
+  // Place movers at destinations sorted by previous ranking (lower = higher rank)
+  resolvedMoves.sort((a, b) => {
+    if (a.prevRanking === null) return 1;
+    if (b.prevRanking === null) return -1;
+    return a.prevRanking - b.prevRanking;
+  });
+  for (const m of resolvedMoves) {
+    const p = game.players.get(m.userId);
+    // Check ship capacity at resolution time (two players may have declared same destination)
+    if (m.dest !== 'island' && game.locations[m.dest].crew.length >= 5) {
+      // Ship full at resolution — redirect to island
+      game.locations.island.residents.push(m.userId);
+      p.location = 'island';
+      await ctx.telegram.sendMessage(chatId, msg.moveRedirectedToIsland(m.name, m.dest));
+    } else if (m.dest === 'island') {
+      game.locations.island.residents.push(m.userId);
+      p.location = m.dest;
+      await ctx.telegram.sendMessage(chatId, msg.movedTo(m.name, m.dest));
+    } else {
+      game.locations[m.dest].crew.push(m.userId);
+      p.location = m.dest;
+      await ctx.telegram.sendMessage(chatId, msg.movedTo(m.name, m.dest));
+    }
+  }
+
+  // Step 3: Resolve treasure transfers
+  for (const ev of game.pendingEvents) {
+    if (ev.type !== 'treasure_transfer') continue;
+    const p = game.players.get(ev.userId);
+    if (!p) continue;
+
+    const holds = game.locations[ev.ship].holds;
+    const sourceHold = ev.targetHold === 'english' ? 'french' : 'english';
+
+    if (holds[sourceHold] > 0) {
+      holds[sourceHold]--;
+      holds[ev.targetHold]++;
+      if (ev.mistMode) {
+        await sendDM(ctx, ev.userId, msg.treasureMovedSuccess(ev.targetHold));
+      } else {
+        await ctx.telegram.sendMessage(chatId, msg.treasureMoved(p.name, ev.ship, ev.targetHold));
+      }
+    } else {
+      if (ev.mistMode) {
+        await sendDM(ctx, ev.userId, msg.treasureMovedFailed);
+      }
+      // Normal mode: silently fail (source was empty at resolution time)
+    }
+  }
+
+  // Step 4: Resolve inspects (mist mode — after transfers so first mate sees post-transfer state)
+  for (const ev of game.pendingEvents) {
+    if (ev.type !== 'inspect') continue;
+
+    const holds = game.locations[ev.ship].holds;
+    const inspectText = `📊 *بررسی انبار* (${shipLabel(ev.ship)}):\n🇬🇧: ${holds.english.toLocaleString("fa-IR")}\n🇫🇷: ${holds.french.toLocaleString("fa-IR")}`;
+    await sendDM(ctx, ev.initiator, inspectText);
+  }
+}
+
 // Transition from day to night (called automatically when all players are done)
 async function endDay(ctx, game) {
   if (!game) {
@@ -11,8 +103,16 @@ async function endDay(ctx, game) {
   }
   if (game.phase !== 'day') return;
 
+  // === Day-end resolution phase: resolve non-voting actions before night ===
+  await resolveDayEndActions(ctx, game);
+
+  // Filter out resolved non-voting events, keep only voting events (attack, mutiny, maroon, dispute)
+  game.pendingEvents = game.pendingEvents.filter(
+    (e) => e.type === 'attack' || e.type === 'mutiny' || e.type === 'maroon' || e.type === 'dispute'
+  );
+
   if (game.pendingEvents.length === 0) {
-    // No events, skip night
+    // No voting events, skip night
     await ctx.reply(msg.noEventsAtNight, { parse_mode: 'Markdown' });
     return advanceRound(ctx, game);
   }
@@ -20,10 +120,11 @@ async function endDay(ctx, game) {
   game.startNight();
   await ctx.reply(msg.nightStart, { parse_mode: 'Markdown' });
 
-  // Send DMs with vote keyboards
+  // Send DMs with vote keyboards (phase 1: attack + mutiny only; dispute DMs sent in phase 2)
   for (let i = 0; i < game.pendingEvents.length; i++) {
     const ev = game.pendingEvents[i];
     if (ev.cancelled || ev.autoResolved) continue;
+    if (ev.type === 'dispute') continue; // dispute voting deferred to phase 2
 
     const voters = game.expectedVoters.get(i);
 
@@ -40,12 +141,6 @@ async function endDay(ctx, game) {
       keyboard = Markup.inlineKeyboard([
         Markup.button.callback('✅ موافق', `vote_${i}_for`),
         Markup.button.callback('❌ مخالف', `vote_${i}_against`),
-      ]);
-    } else if (ev.type === 'dispute') {
-      text = msg.voteDisputeDM;
-      keyboard = Markup.inlineKeyboard([
-        Markup.button.callback('🇬🇧 انگلیس', `vote_${i}_england`),
-        Markup.button.callback('🇫🇷 فرانسه', `vote_${i}_france`),
       ]);
     }
 
@@ -83,8 +178,12 @@ async function handleVoteCallback(ctx) {
   await ctx.answerCbQuery(msg.voteRecorded);
   await ctx.editMessageText(`✅ رای شما ثبت شد.`);
 
-  // Check if all voting is complete
-  if (game.allVotingComplete()) {
+  // Two-phase voting: dispute votes are collected after mutiny/maroon resolve
+  if (game._disputePhase) {
+    if (disputeVotingComplete(game)) {
+      await resolveDisputesAndAdvance(ctx, game);
+    }
+  } else if (game.allVotingComplete()) {
     await resolveAllEvents(ctx, game);
   }
 }
@@ -220,9 +319,63 @@ async function resolveAllEvents(ctx, game) {
     }
   }
 
-  // Step 3: Resolve disputes
-  await resolveDisputes(ctx, game);
+  // Step 3: Set up dispute voting (phase 2) — voters determined now that island residents are final
+  await setupDisputePhase(ctx, game);
+}
 
+// Two-phase voting: dispute voters are set up AFTER mutiny/maroon resolve
+// so that expelled/marooned players can vote in disputes
+async function setupDisputePhase(ctx, game) {
+  const hasDispute = game.pendingEvents.some(e => e.type === 'dispute' && !e.cancelled);
+  if (!hasDispute) {
+    return advanceRound(ctx, game);
+  }
+
+  // Set up dispute voters based on current island residents (post mutiny/maroon)
+  for (let i = 0; i < game.pendingEvents.length; i++) {
+    const ev = game.pendingEvents[i];
+    if (ev.type !== 'dispute' || ev.cancelled) continue;
+
+    const voters = new Set();
+    for (const id of game.locations.island.residents) voters.add(id);
+    game.expectedVoters.set(i, voters);
+    game.votes.set(i, new Map());
+
+    if (voters.size === 0) {
+      ev.cancelled = true;
+      continue;
+    }
+
+    // Send dispute vote DMs
+    const keyboard = Markup.inlineKeyboard([
+      Markup.button.callback('🇬🇧 انگلیس', `vote_${i}_england`),
+      Markup.button.callback('🇫🇷 فرانسه', `vote_${i}_france`),
+    ]);
+    for (const voterId of voters) {
+      await sendDM(ctx, voterId, msg.voteDisputeDM, keyboard);
+    }
+  }
+
+  game._disputePhase = true;
+
+  // Check if voting is already complete (e.g., all disputes cancelled)
+  if (disputeVotingComplete(game)) {
+    return resolveDisputesAndAdvance(ctx, game);
+  }
+}
+
+function disputeVotingComplete(game) {
+  for (let i = 0; i < game.pendingEvents.length; i++) {
+    const ev = game.pendingEvents[i];
+    if (ev.type !== 'dispute' || ev.cancelled) continue;
+    if (!game.isVotingComplete(i)) return false;
+  }
+  return true;
+}
+
+async function resolveDisputesAndAdvance(ctx, game) {
+  delete game._disputePhase;
+  await resolveDisputes(ctx, game);
   await advanceRound(ctx, game);
 }
 
@@ -329,10 +482,8 @@ async function handleLootCallback(ctx) {
     }
   }
 
-  // Resolve disputes
-  await resolveDisputes(ctx, game);
-
-  await advanceRound(ctx, game);
+  // Set up dispute voting phase (phase 2)
+  await setupDisputePhase(ctx, game);
 }
 
 async function advanceRound(ctx, game) {
