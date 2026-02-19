@@ -2,6 +2,7 @@ const { Markup } = require('telegraf');
 const { findGameByPlayer, getGame, deleteGame } = require('./game');
 const { msg, shipLabel, TEAM_NAMES } = require('./messages');
 const { sendDM } = require('./actions');
+const { renderGameState } = require('./canvas/render');
 
 // Resolve non-voting day actions in order: moves, treasure transfers, inspects
 async function resolveDayEndActions(ctx, game) {
@@ -495,20 +496,62 @@ async function advanceRound(ctx, game) {
   await sendDayStart(ctx, game);
 }
 
+function buildRenderData(game) {
+  const getName = (id) => game.players.get(id)?.name || '?';
+  return {
+    island: {
+      residents: game.locations.island.residents.map(getName),
+      english: game.locations.island.treasures.english,
+      french: game.locations.island.treasures.french,
+    },
+    jollyRoger: {
+      crew: game.locations.jollyRoger.crew.map(getName),
+      english: game.locations.jollyRoger.holds.english,
+      french: game.locations.jollyRoger.holds.french,
+    },
+    flyingDutchman: {
+      crew: game.locations.flyingDutchman.crew.map(getName),
+      english: game.locations.flyingDutchman.holds.english,
+      french: game.locations.flyingDutchman.holds.french,
+    },
+    spanish: game.locations.spanishShip.treasures,
+  };
+}
+
 async function sendDayStart(ctx, game) {
-  const gameStateMessage = await ctx.telegram.sendMessage(
-    game.chatId,
-    msg.status(game),
-    { parse_mode: 'Markdown' }
-  );
-  await ctx.telegram.sendMessage(
-    game.chatId,
-    msg.dayStart(game.round, game.mistMode),
-    { parse_mode: 'Markdown' }
-  );
+  // Render and send game state image
   try {
-    await ctx.telegram.pinChatMessage(game.chatId, gameStateMessage.message_id)
-  } catch { }
+    const canvas = await renderGameState(buildRenderData(game));
+    const buf = canvas.toBuffer('image/png');
+    const gameStateMessage = await ctx.telegram.sendPhoto(
+      game.chatId,
+      { source: buf },
+      { caption: msg.status(game), parse_mode: 'Markdown' }
+    );
+    await ctx.telegram.sendMessage(
+      game.chatId,
+      msg.dayStart(game.round, game.mistMode),
+      { parse_mode: 'Markdown' }
+    );
+    try {
+      await ctx.telegram.pinChatMessage(game.chatId, gameStateMessage.message_id);
+    } catch { }
+  } catch (err) {
+    // Fallback to text if image rendering fails
+    const gameStateMessage = await ctx.telegram.sendMessage(
+      game.chatId,
+      msg.status(game),
+      { parse_mode: 'Markdown' }
+    );
+    await ctx.telegram.sendMessage(
+      game.chatId,
+      msg.dayStart(game.round, game.mistMode),
+      { parse_mode: 'Markdown' }
+    );
+    try {
+      await ctx.telegram.pinChatMessage(game.chatId, gameStateMessage.message_id);
+    } catch { }
+  }
 }
 
 async function endGame(ctx, game) {
