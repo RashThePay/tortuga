@@ -11,14 +11,33 @@ class TreasureIslandBot {
   }
 
   setupHandlers() {
-    this.bot.command('start_game', (ctx) => this.handleJoin(ctx));
+    this.bot.telegram.setMyCommands([
+      { command: 'new_game', description: 'ساخت بازی جدید' },
+      { command: 'join', description: 'پیوستن به بازی' },
+      { command: 'start', description: 'شروع بازی' },
+      { command: 'stop', description: 'توقف و حذف بازی' },
+      { command: 'help', description: 'راهنمای بازی' }
+    ]);
+
+    this.bot.command('new_game', (ctx) => this.handleNewGame(ctx));
     this.bot.command('join', (ctx) => this.handleJoin(ctx));
     this.bot.command('start', (ctx) => {
       if (ctx.chat.type === 'private') {
-        ctx.reply('سلام! من ربات بازی جزیره گنج هستم. برای شروع بازی باید در یک گروه دستور /join را بزنید.');
+        ctx.reply('سلام! من ربات بازی جزیره گنج هستم. برای شروع بازی باید در یک گروه از دستورات /new_game و /join استفاده کنید.');
       } else {
         this.handleStart(ctx);
       }
+    });
+    this.bot.command('stop', (ctx) => this.handleStop(ctx));
+    this.bot.command('help', (ctx) => {
+      ctx.reply(`🏴‍☠️ *راهنمای بازی جزیره گنج*
+
+1. ابتدا با دستور /new_game بازی را بسازید.
+2. حالت بازی (عادی یا مه‌آلود) را انتخاب کنید.
+3. سایر بازیکنان با /join وارد شوند (حداقل ۴ نفر).
+4. با دستور /start بازی را شروع کنید.
+
+جزئیات نقش‌ها و اقدامات در پی‌وی ربات برای شما ارسال خواهد شد.`, { parse_mode: 'Markdown' });
     });
 
     this.bot.action('act_choose_move', async (ctx) => {
@@ -32,7 +51,7 @@ class TreasureIslandBot {
         const moves = [];
         if (player.location === LOCATIONS.ISLAND) {
             moves.push([Markup.button.callback('🏴‍☠️ فلاینگ داچمن', `act_${ACTIONS.MOVE}_${LOCATIONS.FLYING_DUTCHMAN}`)]);
-            moves.push([Markup.button.callback('☠ جالی راجر', `act_${ACTIONS.MOVE}_${LOCATIONS.JOLLY_ROGER}`)]);
+            moves.push([Markup.button.callback('☠️ جالی راجر', `act_${ACTIONS.MOVE}_${LOCATIONS.JOLLY_ROGER}`)]);
         } else {
             moves.push([Markup.button.callback('🏝 جزیره', `act_${ACTIONS.MOVE}_${LOCATIONS.ISLAND}`)]);
         }
@@ -42,13 +61,26 @@ class TreasureIslandBot {
     this.bot.on('callback_query', (ctx) => this.handleCallback(ctx));
   }
 
+  async handleNewGame(ctx) {
+    if (ctx.chat.type === 'private') return;
+    const chatId = ctx.chat.id;
+    if (this.games.has(chatId)) {
+      return ctx.reply('یک بازی در این گروه در حال جریان است.');
+    }
+
+    this.games.set(chatId, new Game(chatId));
+    ctx.reply('🎮 بازی جدید ساخته شد!\nلطفاً حالت بازی را انتخاب کنید:', Markup.inlineKeyboard([
+      [Markup.button.callback('عادی ☀️', 'fog_off'), Markup.button.callback('مه‌آلود 🌫', 'fog_on')]
+    ]));
+  }
+
   async handleJoin(ctx) {
     if (ctx.chat.type === 'private') return;
     const chatId = ctx.chat.id;
-    if (!this.games.has(chatId)) {
-      this.games.set(chatId, new Game(chatId));
-    }
     const game = this.games.get(chatId);
+    if (!game) {
+      return ctx.reply('ابتدا باید با /new_game یک بازی بسازید.');
+    }
     if (game.phase !== PHASES.LOBBY) {
       return ctx.reply('بازی در حال حاضر شروع شده است.');
     }
@@ -57,7 +89,7 @@ class TreasureIslandBot {
     const userName = ctx.from.first_name;
     if (game.addPlayer(userId, userName)) {
       this.playerGames.set(userId, chatId);
-      ctx.reply(`${userName} به بازی پیوست. (تعداد بازیکنان: ${game.players.size})`);
+      ctx.reply(`${userName} به بازی پیوست. (تعداد بازیکنان: ${game.players.size}/10)`);
     } else {
       ctx.reply('شما قبلاً عضو شده‌اید یا ظرفیت بازی تکمیل است.');
     }
@@ -66,17 +98,33 @@ class TreasureIslandBot {
   async handleStart(ctx) {
     const chatId = ctx.chat.id;
     const game = this.games.get(chatId);
-    if (!game || game.phase !== PHASES.LOBBY) return;
+    if (!game) return;
+    if (game.phase !== PHASES.LOBBY) return;
     if (!game.players.has(ctx.from.id)) return;
 
     if (game.players.size < 4) {
       return ctx.reply('برای شروع بازی حداقل به ۴ نفر نیاز است.');
     }
 
-    // Ask for Fog Mode
-    ctx.reply('آیا می‌خواهید حالت مه‌گرفتگی (Fog Mode) فعال باشد؟', Markup.inlineKeyboard([
-      [Markup.button.callback('بله ✅', 'fog_on'), Markup.button.callback('خیر ❌', 'fog_off')]
-    ]));
+    if (game.fogMode === undefined) {
+        return ctx.reply('لطفاً ابتدا حالت بازی (مه‌آلود یا عادی) را انتخاب کنید.');
+    }
+
+    game.startGame(game.fogMode);
+    ctx.reply(`بازی با ${game.players.size} بازیکن شروع شد! (حالت: ${game.fogMode ? 'مه‌آلود' : 'عادی'})`);
+    this.announceRoles(game);
+    this.startPreGame(game);
+  }
+
+  async handleStop(ctx) {
+    const chatId = ctx.chat.id;
+    const game = this.games.get(chatId);
+    if (!game) return;
+    
+    // In a real scenario, you might want to restrict this to admins or the host
+    game.players.forEach((_, id) => this.playerGames.delete(id));
+    this.games.delete(chatId);
+    ctx.reply('🛑 بازی متوقف شد.');
   }
 
   async handleCallback(ctx) {
@@ -89,10 +137,8 @@ class TreasureIslandBot {
 
     if (data === 'fog_on' || data === 'fog_off') {
       if (game.phase !== PHASES.LOBBY) return;
-      game.startGame(data === 'fog_on');
-      await ctx.editMessageText(`بازی با موفقیت شروع شد! (حالت مه‌گرفتگی: ${game.fogMode ? 'فعال' : 'غیرفعال'})`);
-      this.announceRoles(game);
-      this.startPreGame(game);
+      game.fogMode = (data === 'fog_on');
+      await ctx.editMessageText(`حالت بازی انتخاب شد: ${game.fogMode ? 'مه‌آلود 🌫' : 'عادی ☀️'}\nاکنون بازیکنان می‌توانند با /join وارد شوند و سپس یکی از اعضا /start را بزند.`);
       return;
     }
 
@@ -104,7 +150,7 @@ class TreasureIslandBot {
         const ship = game.ships[player.location];
         const whText = game.fogMode ? 'نامشخص' : game.getWarehouseName(wh);
         this.bot.telegram.sendMessage(game.chatId, `⚓️ ناخدا ${player.name} گنج اولیه ${ship.name} را در انبار ${whText} قرار داد.`);
-
+        
         if (game.phase === PHASES.DAY) {
           this.startDay(game);
         }
@@ -117,6 +163,8 @@ class TreasureIslandBot {
       const action = parts[1];
       const target = parts[2];
 
+      if (action === 'choose') return ctx.answerCbQuery();
+      
       // Special handling for actions that need more data (like Exile target or Move target)
       if (action === ACTIONS.MOVE) {
         game.submitAction(userId, action, { target });
@@ -126,7 +174,7 @@ class TreasureIslandBot {
         if (!target) {
             // Show list of crew members to exile
             const ship = game.ships[game.players.get(userId).location];
-            const buttons = ship.crew.filter(p => p.id !== userId).map(p =>
+            const buttons = ship.crew.filter(p => p.id !== userId).map(p => 
                 [Markup.button.callback(p.name, `act_EXILE_${p.id}`)]
             );
             await ctx.editMessageText('چه کسی را می‌خواهید اخراج کنید؟', Markup.inlineKeyboard(buttons));
@@ -139,8 +187,8 @@ class TreasureIslandBot {
       } else if (action === ACTIONS.ATTACK) {
           if (!target) {
              await ctx.editMessageText('گنج دزدیده شده در کدام انبار قرار گیرد؟', Markup.inlineKeyboard([
-                 [Markup.button.callback('انگلیسی', `act_ATTACK_${WAREHOUSES.ENGLISH}`)],
-                 [Markup.button.callback('فرانسوی', `act_ATTACK_${WAREHOUSES.FRENCH}`)]
+                 [Markup.button.callback('🇬🇧 انگلیسی', `act_ATTACK_${WAREHOUSES.ENGLISH}`)],
+                 [Markup.button.callback('🇫🇷 فرانسوی', `act_ATTACK_${WAREHOUSES.FRENCH}`)]
              ]));
              return;
           } else {
@@ -151,8 +199,8 @@ class TreasureIslandBot {
       } else if (action === ACTIONS.TREASURE_MOVE) {
           if (parts.length === 2) {
               await ctx.editMessageText('از کدام انبار؟', Markup.inlineKeyboard([
-                  [Markup.button.callback('انگلیسی', `act_TREASURE_MOVE_${WAREHOUSES.ENGLISH}`)],
-                  [Markup.button.callback('فرانسوی', `act_TREASURE_MOVE_${WAREHOUSES.FRENCH}`)]
+                  [Markup.button.callback('🇬🇧 انگلیسی', `act_TREASURE_MOVE_${WAREHOUSES.ENGLISH}`)],
+                  [Markup.button.callback('🇫🇷 فرانسوی', `act_TREASURE_MOVE_${WAREHOUSES.FRENCH}`)]
               ]));
               return;
           } else if (parts.length === 3) {
@@ -191,8 +239,8 @@ class TreasureIslandBot {
     game.players.forEach(p => {
       if (p.isCaptain()) {
         this.bot.telegram.sendMessage(p.id, "کدام انبار برای گنج اولیه؟", Markup.inlineKeyboard([
-          [Markup.button.callback('انگلیسی', `init_wh_${WAREHOUSES.ENGLISH}`)],
-          [Markup.button.callback('فرانسوی', `init_wh_${WAREHOUSES.FRENCH}`)]
+          [Markup.button.callback('🇬🇧 انگلیسی', `init_wh_${WAREHOUSES.ENGLISH}`)],
+          [Markup.button.callback('🇫🇷 فرانسوی', `init_wh_${WAREHOUSES.FRENCH}`)]
         ]));
       }
     });
@@ -201,7 +249,7 @@ class TreasureIslandBot {
   startDay(game) {
     this.bot.telegram.sendMessage(game.chatId, game.getGameStateSummary(), { parse_mode: 'Markdown' });
     this.bot.telegram.sendMessage(game.chatId, `☀️ *فاز روز راند ${game.round} آغاز شد.*\nبازیکنان اقدامات خود را در پی‌وی ربات انتخاب کنند.`, { parse_mode: 'Markdown' });
-
+    
     game.players.forEach(p => {
       const buttons = this.getAvailableActions(game, p);
       this.bot.telegram.sendMessage(p.id, `راند ${game.round}: اقدام خود را انتخاب کنید:`, Markup.inlineKeyboard(buttons));
@@ -210,34 +258,34 @@ class TreasureIslandBot {
 
   getAvailableActions(game, player) {
     const buttons = [];
-
+    
     // Everyone can Move or Pass
-    buttons.push([Markup.button.callback('🚶 حرکت', 'act_choose_move')]);
-
+    buttons.push([Markup.button.callback('🚶 حرکت کردن', 'act_choose_move')]);
+    
     if (player.isCaptain()) {
       buttons.push([Markup.button.callback('⚔️ دستور حمله', `act_${ACTIONS.ATTACK}`)]);
       buttons.push([Markup.button.callback('🏴‍☠️ اخراج خدمه', `act_${ACTIONS.EXILE}`)]);
     }
-
+    
     if (player.isFirstMate(game.ships[player.location]?.crew.length)) {
       buttons.push([Markup.button.callback('🗡 شورش', `act_${ACTIONS.MUTINY}`)]);
       if (game.fogMode) {
         buttons.push([Markup.button.callback('🔍 بررسی انبار', `act_${ACTIONS.CHECK_WAREHOUSE}`)]);
       }
     }
-
+    
     if (player.isCabinBoy(game.ships[player.location]?.crew.length)) {
       buttons.push([Markup.button.callback('📦 جابه‌جایی گنج', `act_${ACTIONS.TREASURE_MOVE}`)]);
     }
-
+    
     if (player.location === LOCATIONS.ISLAND) {
       buttons.push([Markup.button.callback('⚔️ منازعه', `act_${ACTIONS.CONFLICT}`)]);
       if (player.isGovernor() && game.round >= 6) {
         buttons.push([Markup.button.callback('🚢 خبر کردن ناوگان', `act_${ACTIONS.CALL_FLEET}`)]);
       }
     }
-
-    buttons.push([Markup.button.callback('💤 بدون اقدام (پاس)', `act_${ACTIONS.PASS}`)]);
+    
+    buttons.push([Markup.button.callback('💤 بدون اقدام (Pass)', `act_${ACTIONS.PASS}`)]);
 
     return buttons;
   }
@@ -246,7 +294,7 @@ class TreasureIslandBot {
     if (game.allActionsSubmitted()) {
       const logs = game.resolveDay();
       this.bot.telegram.sendMessage(game.chatId, `🌕 *فاز شب راند ${game.round} آغاز شد.*\n\n${logs.join('\n')}`, { parse_mode: 'Markdown' });
-
+      
       const expectedVoters = game.getExpectedVoters();
       if (expectedVoters.length === 0) {
         this.resolveNightAndContinue(game);
@@ -260,7 +308,7 @@ class TreasureIslandBot {
 
   sendVoteOptions(game, player) {
     const actions = Array.from(game.players.values()).map(p => ({ p, a: p.action }));
-
+    
     // Check what the player needs to vote on
     const mutinyOnShip = actions.find(x => x.a === ACTIONS.MUTINY && x.p.location === player.location);
     if (mutinyOnShip && player.rank !== 1) {
@@ -301,7 +349,7 @@ class TreasureIslandBot {
       game.players.forEach(p => {
         if (p.action === ACTIONS.CHECK_WAREHOUSE && p.isFirstMate(game.ships[p.location]?.crew.length)) {
           const ship = game.ships[p.location];
-          this.bot.telegram.sendMessage(p.id, `گزارش انبار ${ship.name}:\nانگلیسی: ${ship.warehouses.ENGLISH}\nفرانسوی: ${ship.warehouses.FRENCH}`);
+          this.bot.telegram.sendMessage(p.id, `گزارش انبار ${ship.name}:\n🇬🇧 انگلیسی: ${ship.warehouses.ENGLISH}\n🇫🇷 فرانسوی: ${ship.warehouses.FRENCH}`);
         }
       });
     }
@@ -319,12 +367,12 @@ class TreasureIslandBot {
   endGame(game) {
     const winners = game.getWinners();
     const scores = game.getScores();
-
+    
     let msg = `🏁 *بازی به پایان رسید!*\n\n`;
     msg += `📊 امتیازات:\n`;
     msg += `🇬🇧 انگلیس: ${scores[TEAMS.ENGLISH]}\n`;
     msg += `🇫🇷 فرانسه: ${scores[TEAMS.FRENCH]}\n\n`;
-
+    
     msg += `🏆 برندگان:\n`;
     if (winners.length === 0) {
       msg += `هیچ‌کس برنده نشد!`;
@@ -335,6 +383,9 @@ class TreasureIslandBot {
     }
 
     this.bot.telegram.sendMessage(game.chatId, msg, { parse_mode: 'Markdown' });
+    
+    // Clean up player mappings
+    game.players.forEach((_, id) => this.playerGames.delete(id));
     this.games.delete(game.chatId);
   }
 

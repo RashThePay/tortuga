@@ -87,7 +87,7 @@ const TEXTS = {
     check_result: (en, fr) => `انبار انگلیسی: ${en}\nفرانسوی: ${fr}`,
     commands: {
         newgame: 'شروع بازی جدید (عادی)',
-        newgame_fog: 'شروع بازی جدید (مه‌گرفتگی)',
+        newgame_fog: 'شروع بازی جدید (مه‌آلود)',
         join: 'عضو شدن در بازی',
         startgame: 'شروع بازی',
         status: 'وضعیت فعلی'
@@ -912,7 +912,7 @@ bot.command('startgame', async (ctx) => {
     }
     try {
         await game.assignTeamsAndShips();
-        await game.sendGroup(`بازی شروع شد! ${game.players.size} بازیکن. ${game.fog ? 'مه‌گرفتگی فعال' : ''}`, ctx);
+        await game.sendGroup(`بازی شروع شد! ${game.players.size} بازیکن. ${game.fog ? 'مه‌آلود فعال' : ''}`, ctx);
     } catch (e) {
         ctx.reply('خطا در شروع: ' + e.message);
     }

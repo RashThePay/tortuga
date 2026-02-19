@@ -97,7 +97,7 @@ class Game {
 
     const ship = this.ships[player.location];
     ship.warehouses[warehouse] = 1;
-
+    
     // Check if both captains have set their initial warehouse
     const bothSet = Object.values(this.ships).every(s => s.getTotalTreasures() === 1);
     if (bothSet) {
@@ -175,13 +175,13 @@ class Game {
     const movers = players.filter(p => p.action === ACTIONS.MOVE).sort((a, b) => {
       // Priority: higher rank first, then earlier submission
       if (a.rank !== b.rank) return a.rank - b.rank;
-      return a.actionTime - b.actionTime;
+      return a.actionTime - b.actionTime; 
     });
 
     movers.forEach(p => {
       const oldLocation = p.location;
       const target = p.actionData.target;
-
+      
       // Check exile restriction
       if (target !== LOCATIONS.ISLAND && p.hasBeenExiled && (this.round === p.exiledRound || this.round === p.exiledRound + 1)) {
         roundLogs.push(`${p.name} به دلیل اخراج شدن نمی‌تواند به کشتی بازگردد.`);
@@ -192,7 +192,7 @@ class Game {
       roundLogs.push(`${p.name} از ${this.getLocationName(oldLocation)} به ${this.getLocationName(target)} رفت.`);
     });
 
-    // Reset mutinyAcceptedByCaptain set at start of each resolution?
+    // Reset mutinyAcceptedByCaptain set at start of each resolution? 
     // Actually the rule says: if Captain leaves voluntarily during mutiny, they can't return next round.
     const mutinyTargets = players.filter(p => p.action === ACTIONS.MUTINY).map(p => p.location);
     movers.forEach(p => {
@@ -224,7 +224,7 @@ class Game {
     }
 
     // Special case: Captain leaves during mutiny
-    const isCaptainDuringMutiny = player.rank === 1 &&
+    const isCaptainDuringMutiny = player.rank === 1 && 
                                   player.location !== LOCATIONS.ISLAND &&
                                   Array.from(this.players.values()).some(p => p.action === ACTIONS.MUTINY && p.location === player.location);
     if (isCaptainDuringMutiny && target === LOCATIONS.ISLAND) {
@@ -333,11 +333,12 @@ class Game {
         p.actionData = null;
         p.vote = null;
       });
-      // Reset successful attack flag for next round's cabin boy check
-      // Actually, "successfulAttackLastNight" refers to the PREVIOUS night.
-      // So we update it now.
-      Object.values(this.ships).forEach(s => {
-        // We'll set this during resolveAttack
+      // Update successful attack flag for next round's cabin boy check
+      Object.values(this.ships).forEach(ship => {
+        const captain = ship.getCaptain();
+        if (!captain || captain.action !== ACTIONS.ATTACK) {
+          ship.successfulAttackLastNight = false;
+        }
       });
     }
 
@@ -360,7 +361,7 @@ class Game {
     if (raids === 1 && extinguishes <= 1 && fires >= 1) {
       ship.successfulAttackLastNight = true;
       const targetWarehouse = captain.actionData.warehouse;
-
+      
       if (this.spanishShipTreasures > 0) {
         this.spanishShipTreasures--;
         ship.warehouses[targetWarehouse]++;
@@ -371,7 +372,7 @@ class Game {
         const otherShipLocation = captain.location === LOCATIONS.FLYING_DUTCHMAN ? LOCATIONS.JOLLY_ROGER : LOCATIONS.FLYING_DUTCHMAN;
         const otherShip = this.ships[otherShipLocation];
         const opponentWarehouse = targetWarehouse === WAREHOUSES.ENGLISH ? WAREHOUSES.FRENCH : WAREHOUSES.ENGLISH;
-
+        
         if (otherShip.warehouses[opponentWarehouse] > 0) {
           otherShip.warehouses[opponentWarehouse]--;
           ship.warehouses[targetWarehouse]++;
@@ -426,7 +427,7 @@ class Game {
       if (!this.fogMode && isSpecial) {
         governorLost = true; // Dutch/Spanish always lose governor after conflict in normal mode
       }
-
+      
       if (governorLost) {
         logs.push(`${governor.name} حاکمیت جزیره را از دست داد.`);
         this.island.removeResident(governor.id);
@@ -453,7 +454,7 @@ class Game {
     const scores = this.getScores();
     const governor = this.island.getGovernor();
     const winners = [];
-
+    
     let dutchWinner = null;
     let spanishWinner = null;
 
