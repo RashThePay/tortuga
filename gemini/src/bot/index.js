@@ -50,8 +50,8 @@ class TreasureIslandBot {
 
         const moves = [];
         if (player.location === LOCATIONS.ISLAND) {
-            moves.push([Markup.button.callback('🚢 فلاینگ داچمن', `act_${ACTIONS.MOVE}_${LOCATIONS.FLYING_DUTCHMAN}`)]);
-            moves.push([Markup.button.callback('🏴‍☠️ جالی راجر', `act_${ACTIONS.MOVE}_${LOCATIONS.JOLLY_ROGER}`)]);
+            moves.push([Markup.button.callback('🏴‍☠️ فلاینگ داچمن', `act_${ACTIONS.MOVE}_${LOCATIONS.FLYING_DUTCHMAN}`)]);
+            moves.push([Markup.button.callback('☠️ جالی راجر', `act_${ACTIONS.MOVE}_${LOCATIONS.JOLLY_ROGER}`)]);
         } else {
             moves.push([Markup.button.callback('🏝 جزیره', `act_${ACTIONS.MOVE}_${LOCATIONS.ISLAND}`)]);
         }
@@ -190,8 +190,8 @@ class TreasureIslandBot {
       } else if (action === ACTIONS.ATTACK) {
           if (!target) {
              await ctx.editMessageText('گنج دزدیده شده در کدام انبار قرار گیرد؟', Markup.inlineKeyboard([
-                 [Markup.button.callback('انگلیسی', `act_ATTACK_${WAREHOUSES.ENGLISH}`)],
-                 [Markup.button.callback('فرانسوی', `act_ATTACK_${WAREHOUSES.FRENCH}`)]
+                 [Markup.button.callback('🇬🇧 انگلیسی', `act_ATTACK_${WAREHOUSES.ENGLISH}`)],
+                 [Markup.button.callback('🇫🇷 فرانسوی', `act_ATTACK_${WAREHOUSES.FRENCH}`)]
              ]));
              return;
           } else {
@@ -202,8 +202,8 @@ class TreasureIslandBot {
       } else if (action === ACTIONS.TREASURE_MOVE) {
           if (parts.length === 2) {
               await ctx.editMessageText('از کدام انبار؟', Markup.inlineKeyboard([
-                  [Markup.button.callback('انگلیسی', `act_TREASURE_MOVE_${WAREHOUSES.ENGLISH}`)],
-                  [Markup.button.callback('فرانسوی', `act_TREASURE_MOVE_${WAREHOUSES.FRENCH}`)]
+                  [Markup.button.callback('🇬🇧 انگلیسی', `act_TREASURE_MOVE_${WAREHOUSES.ENGLISH}`)],
+                  [Markup.button.callback('🇫🇷 فرانسوی', `act_TREASURE_MOVE_${WAREHOUSES.FRENCH}`)]
               ]));
               return;
           } else if (parts.length === 3) {
@@ -244,8 +244,8 @@ class TreasureIslandBot {
     game.players.forEach(p => {
       if (p.isCaptain()) {
         this.bot.telegram.sendMessage(p.id, "کدام انبار برای گنج اولیه؟", Markup.inlineKeyboard([
-          [Markup.button.callback('انگلیسی', `init_wh_${WAREHOUSES.ENGLISH}`)],
-          [Markup.button.callback('فرانسوی', `init_wh_${WAREHOUSES.FRENCH}`)]
+          [Markup.button.callback('🇬🇧 انگلیسی', `init_wh_${WAREHOUSES.ENGLISH}`)],
+          [Markup.button.callback('🇫🇷 فرانسوی', `init_wh_${WAREHOUSES.FRENCH}`)]
         ]));
       }
     });
@@ -354,7 +354,7 @@ class TreasureIslandBot {
       game.players.forEach(p => {
         if (p.action === ACTIONS.CHECK_WAREHOUSE && p.isFirstMate(game.ships[p.location]?.crew.length)) {
           const ship = game.ships[p.location];
-          this.bot.telegram.sendMessage(p.id, `گزارش انبار ${ship.name}:\nانگلیسی: ${ship.warehouses.ENGLISH}\nفرانسوی: ${ship.warehouses.FRENCH}`);
+          this.bot.telegram.sendMessage(p.id, `گزارش انبار ${ship.name}:\n🇬🇧 انگلیسی: ${ship.warehouses.ENGLISH}\n🇫🇷 فرانسوی: ${ship.warehouses.FRENCH}`);
         }
       });
     }
