@@ -251,7 +251,7 @@ const msg = {
     if (engVotes > frVotes) result = 'هر دو گنج به ناحیه‌ی انگلیسی رفت.';
     else if (frVotes > engVotes) result = 'هر دو گنج به ناحیه‌ی فرانسوی رفت.';
     else result = 'مساوی! هر ناحیه یک گنج گرفت.';
-    return `⚖️ *نتیجه‌ی منازعه:*\n🇬🇧 انگلیس: ${engVotes.toLocaleString("fa-IR")} | 🇫🇷 فرانسه: ${frVotes.toLocaleString("fa-IR")}\n${result}`;
+    return `⚖️ *نتیجه‌ی منازعه:*\n‏🇬🇧 انگلیس: ${engVotes.toLocaleString("fa-IR")} | 🇫🇷 فرانسه: ${frVotes.toLocaleString("fa-IR")}\n${result}`;
   },
 
   governorDeposed: (name) =>
@@ -345,7 +345,7 @@ const msg = {
   noNonEmptyBoxes: '⚠️ همه صندوق‌ها خالی هستند.',
   boxPeeked: (content, index) => `🔍 محتوای صندوق ${(index + 1).toLocaleString("fa-IR")}: ${BOX_DESCS[content]}`,
   boxPeekedPublic: (name, index) => `🔍 ‏${name} به صندوق ${(index + 1).toLocaleString("fa-IR")} نگاه کرد.`,
-  boxOpened: (name, content, index) => `📦 ‏${name} صندوق ${(index + 1).toLocaleString("fa-IR")} را باز کرد: ${BOX_NAMES[content]}!`,
+  boxOpened: (name, content, index) => `📦 ‏${name} صندوق ${(index + 1).toLocaleString("fa-IR")} را باز کرد: ${BOX_DESCS[content]}`,
   boxGifted: (gifter, target, content, index) => `🎁 ‏${gifter} صندوق ${(index + 1).toLocaleString("fa-IR")} را به ‏${target} هدیه داد: ${BOX_DESCS[content]}`,
   boxesRefilled: (count) => `📦 صندوق‌ها پر شدند. (${count.toLocaleString("fa-IR")} صندوق فعال)`,
   boxLabel: (index) => `صندوق ${(index + 1).toLocaleString("fa-IR")}`,
