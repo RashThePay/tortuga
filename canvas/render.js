@@ -2,7 +2,7 @@ const { createCanvas, loadImage, registerFont } = require('canvas');
 const path = require('path');
 const fs = require('fs');
 
-const MAP_PATH = path.join(__dirname, 'map.png');
+const MAP_PATH = path.join(__dirname, 'map.jpg');
 const TREASURE_PATH = path.join(__dirname, 'treasure.png');
 
 // Register Book Antiqua fonts
@@ -150,6 +150,8 @@ function drawTreasure(ctx, treasureImg, box) {
 }
 
 function drawClippedName(ctx, name, x, y, w, h) {
+  let firstName = name.split(' ')[0];
+  if (firstName.length < 3) firstName = name.split(' ')[1]
   ctx.save();
   ctx.beginPath();
   ctx.rect(x, y, w, h);
@@ -164,51 +166,51 @@ function drawClippedName(ctx, name, x, y, w, h) {
   ctx.font = `bold ${size}px ${FONT_FAMILY}`;
 
   // Try single line first
-  if (ctx.measureText(name).width <= maxW) {
-    ctx.fillText(name, x + w / 2, y + h / 2);
+  if (ctx.measureText(firstName).width <= maxW) {
+    ctx.fillText(firstName, x + w / 2, y + h / 2);
     ctx.restore();
     return;
   }
 
   // Try wrapping at whitespace into two lines
-  const words = name.split(/\s+/);
-  if (words.length >= 2) {
-    // Find best split point
-    let bestSplit = 1;
-    let bestDiff = Infinity;
-    for (let i = 1; i < words.length; i++) {
-      const line1 = words.slice(0, i).join(' ');
-      const line2 = words.slice(i).join(' ');
-      const diff = Math.abs(ctx.measureText(line1).width - ctx.measureText(line2).width);
-      if (diff < bestDiff) { bestDiff = diff; bestSplit = i; }
-    }
-    const line1 = words.slice(0, bestSplit).join(' ');
-    const line2 = words.slice(bestSplit).join(' ');
+  // const words = name.split(/\s+/);
+  // if (words.length >= 2) {
+  //   // Find best split point
+  //   let bestSplit = 1;
+  //   let bestDiff = Infinity;
+  //   for (let i = 1; i < words.length; i++) {
+  //     const line1 = words.slice(0, i).join(' ');
+  //     const line2 = words.slice(i).join(' ');
+  //     const diff = Math.abs(ctx.measureText(line1).width - ctx.measureText(line2).width);
+  //     if (diff < bestDiff) { bestDiff = diff; bestSplit = i; }
+  //   }
+  //   const line1 = words.slice(0, bestSplit).join(' ');
+  //   const line2 = words.slice(bestSplit).join(' ');
 
-    // Shrink font if either line still overflows
-    let s = size;
-    ctx.font = `bold ${s}px ${FONT_FAMILY}`;
-    while ((ctx.measureText(line1).width > maxW || ctx.measureText(line2).width > maxW) && s > 10) {
-      s -= 2;
-      ctx.font = `bold ${s}px ${FONT_FAMILY}`;
-    }
+  //   // Shrink font if either line still overflows
+  //   let s = size;
+  //   ctx.font = `bold ${s}px ${FONT_FAMILY}`;
+  //   while ((ctx.measureText(line1).width > maxW || ctx.measureText(line2).width > maxW) && s > 10) {
+  //     s -= 2;
+  //     ctx.font = `bold ${s}px ${FONT_FAMILY}`;
+  //   }
 
-    const lineHeight = s * 1.15;
-    const topY = y + h / 2 - lineHeight / 2;
-    const botY = y + h / 2 + lineHeight / 2;
-    ctx.fillText(line1, x + w / 2, topY);
-    ctx.fillText(line2, x + w / 2, botY);
-    ctx.restore();
-    return;
-  }
+  //   const lineHeight = s * 1.15;
+  //   const topY = y + h / 2 - lineHeight / 2;
+  //   const botY = y + h / 2 + lineHeight / 2;
+  //   ctx.fillText(line1, x + w / 2, topY);
+  //   ctx.fillText(line2, x + w / 2, botY);
+  //   ctx.restore();
+  //   return;
+  // }
 
   // Single long word — shrink to fit
   let s = size;
-  while (ctx.measureText(name).width > maxW && s > 10) {
+  while (ctx.measureText(firstName).width > maxW && s > 10) {
     s -= 2;
     ctx.font = `bold ${s}px ${FONT_FAMILY}`;
   }
-  ctx.fillText(name, x + w / 2, y + h / 2);
+  ctx.fillText(firstName, x + w / 2, y + h / 2);
   ctx.restore();
 }
 
