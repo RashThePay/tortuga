@@ -30,6 +30,9 @@ bot.command('replace', (ctx) => actions.moveTreasure(ctx));
 bot.command('callarmada', (ctx) => actions.callArmada(ctx));
 bot.command('dispute', (ctx) => actions.dispute(ctx));
 bot.command('pass', (ctx) => actions.pass(ctx));
+bot.command('look', (ctx) => actions.lookBox(ctx));
+bot.command('open', (ctx) => actions.openBox(ctx));
+bot.command('gift', (ctx) => actions.giftBox(ctx));
 bot.command('status', (ctx) => actions.status(ctx));
 
 // Callback queries (inline keyboard presses)
@@ -40,6 +43,7 @@ bot.on('callback_query', async (ctx) => {
   if (data.startsWith('setup_')) return votes.handleSetupCallback(ctx);
   if (data.startsWith('loot_')) return votes.handleLootCallback(ctx);
   if (data.startsWith('act_')) return actions.handleActionCallback(ctx);
+  if (data.startsWith('box_')) return actions.handleBoxCallback(ctx);
 });
 
 bot.catch((err) => {

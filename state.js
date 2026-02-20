@@ -1,3 +1,13 @@
+const REGULAR_BOX_POOL = [
+  ...Array(3).fill('boat'), ...Array(3).fill('pistol'),
+  ...Array(3).fill('blackspot'), ...Array(3).fill('albatross'),
+  'atlantis', 'eldorado', 'clover',
+];
+const SPECIAL_BOX_POOL = [
+  'blackpowder', 'shipfever', 'crowsnest', 'eightbells',
+  'mask', 'piratecode', 'scurvy', 'stormysea',
+];
+
 class GameState {
   constructor(chatId) {
     this.chatId = chatId;
@@ -21,6 +31,19 @@ class GameState {
     this.disputeThisRound = false;
     this.setupPending = new Set(); // captains who still need to place initial treasure
     this.successfulAttackShips = new Set(); // ships that had successful attacks this round and the previous round
+
+    // Box mode
+    this.boxMode = false;
+    this.boxes = [];             // [{content: string|null, peekedBy: Set}] x5
+    this.boxPool = [];           // remaining items for refill
+    this.specialBoxItems = [];   // 3 specials chosen for this game
+    this.usedExtraAction = new Set();
+    this.heldItems = new Map();  // userId -> [{type, used}]
+    this.pendingBoxEffect = null; // {type, targetId, gifterId?, step, data}
+    this.scurvyNextRound = new Set();
+    this.scurvyActive = new Set();
+    this.pirateCodeVotes = new Map(); // userId -> remaining votes to skip
+    this.blackPowderShips = new Set();
   }
 
   addLobbyPlayer(id, name) {
@@ -86,6 +109,8 @@ class GameState {
     if (fdCaptain) this.setupPending.add(fdCaptain);
     if (jrCaptain) this.setupPending.add(jrCaptain);
 
+    if (this.boxMode) this.initializeBoxes();
+
     return { fdCaptain, jrCaptain };
   }
 
@@ -111,13 +136,12 @@ class GameState {
     this.expectedVoters.clear();
     this.disputeThisRound = false;
 
-    // // Clear expulsion history from 2+ rounds ago (keep only current and previous round)
-    // for (const [, p] of this.players) {
-    //   if (p.expelledFrom && p.expelledFrom.length > 0) {
-    //     // Keep only the most recent expulsion
-    //     p.expelledFrom = p.expelledFrom.slice(-1);
-    //   }
-    // }
+    if (this.boxMode) {
+      this.usedExtraAction.clear();
+      this.pendingBoxEffect = null;
+      this.scurvyActive = new Set(this.scurvyNextRound);
+      this.scurvyNextRound.clear();
+    }
   }
 
   markAction(userId) {
@@ -284,7 +308,18 @@ class GameState {
     if (!expected || !expected.has(userId)) return false;
     const voteMap = this.votes.get(eventIndex);
     if (voteMap.has(userId)) return false;
-    voteMap.set(userId, vote);
+
+    if (this.boxMode && this.pirateCodeVotes.has(userId)) {
+      voteMap.set(userId, { vote, nullified: true });
+      const remaining = this.pirateCodeVotes.get(userId) - 1;
+      if (remaining <= 0) this.pirateCodeVotes.delete(userId);
+      else this.pirateCodeVotes.set(userId, remaining);
+    } else if (this.boxMode && this.hasUnusedItem(userId, 'eldorado')) {
+      voteMap.set(userId, { vote, doubleVote: true });
+      this.useItem(userId, 'eldorado');
+    } else {
+      voteMap.set(userId, vote);
+    }
     return true;
   }
 
@@ -304,15 +339,15 @@ class GameState {
   resolveAttack(eventIndex) {
     const ev = this.pendingEvents[eventIndex];
     const voteMap = this.votes.get(eventIndex);
+    const effective = this._getEffectiveVotes(voteMap);
 
     let charges = 0, fires = 0, waters = 0;
-    for (const v of voteMap.values()) {
+    for (const v of effective) {
       if (v === 'charge') charges++;
       else if (v === 'fire') fires++;
       else if (v === 'water') waters++;
     }
 
-    // New rules: exactly 1 charge, at least 1 fire, extinguish votes must not be > 1
     const success = charges === 1 && fires >= 1 && waters <= 1;
     return { success, charges, fires, waters, ship: ev.ship, target: ev.target, initiator: ev.initiator };
   }
@@ -341,9 +376,10 @@ class GameState {
   resolveMutiny(eventIndex) {
     const ev = this.pendingEvents[eventIndex];
     const voteMap = this.votes.get(eventIndex);
+    const effective = this._getEffectiveVotes(voteMap);
 
     let forV = 0, against = 0;
-    for (const v of voteMap.values()) {
+    for (const v of effective) {
       if (v === 'for') forV++;
       else against++;
     }
@@ -351,17 +387,18 @@ class GameState {
     const success = forV > against;
     if (success) {
       const captain = this.locations[ev.ship].crew[0];
-      this.sendToIsland(captain, true); // Mark as expelled
+      const result = this.tryExpel(captain, true);
+      return { success, forV, against, ship: ev.ship, initiator: ev.initiator, cloverBlocked: result.blocked };
     }
-    // No penalty for failed mutiny anymore
-    return { success, forV, against, ship: ev.ship, initiator: ev.initiator };
+    return { success, forV, against, ship: ev.ship, initiator: ev.initiator, cloverBlocked: false };
   }
 
   resolveDispute(eventIndex) {
     const voteMap = this.votes.get(eventIndex);
+    const effective = this._getEffectiveVotes(voteMap);
 
     let engVotes = 0, frVotes = 0;
-    for (const v of voteMap.values()) {
+    for (const v of effective) {
       if (v === 'england') engVotes++;
       else frVotes++;
     }
@@ -384,7 +421,8 @@ class GameState {
     const governor = this.locations.island.residents[0];
     let governorDeposed = false;
     if (governor) {
-      const govVote = voteMap.get(governor);
+      const rawGovVote = voteMap.get(governor);
+      const govVote = typeof rawGovVote === 'object' ? rawGovVote.vote : rawGovVote;
       const govTeam = this.players.get(governor)?.team;
 
       // Dutch and Spanish governors always get deposed after dispute
@@ -485,6 +523,124 @@ class GameState {
     return { won: false };
   }
 
+  // --- Box mode methods ---
+
+  initializeBoxes() {
+    const pool = [...REGULAR_BOX_POOL];
+    const specials = shuffle([...SPECIAL_BOX_POOL]);
+    this.specialBoxItems = specials.slice(0, 3);
+    pool.push(...this.specialBoxItems);
+    shuffle(pool);
+
+    this.boxes = [];
+    for (let i = 0; i < 5; i++) {
+      this.boxes.push({ content: pool.pop() || null, peekedBy: new Set() });
+    }
+    this.boxPool = pool;
+  }
+
+  refillBoxes() {
+    for (let i = 0; i < this.boxes.length; i++) {
+      if (this.boxes[i].content === null && this.boxPool.length > 0) {
+        this.boxes[i].content = this.boxPool.pop();
+        this.boxes[i].peekedBy = new Set();
+      }
+    }
+  }
+
+  peekBox(userId, boxIndex) {
+    const box = this.boxes[boxIndex];
+    if (!box || box.content === null) return null;
+    box.peekedBy.add(userId);
+    return box.content;
+  }
+
+  openBox(boxIndex) {
+    const box = this.boxes[boxIndex];
+    if (!box || box.content === null) return null;
+    const item = box.content;
+    box.content = null;
+    box.peekedBy.clear();
+    return item;
+  }
+
+  markExtraAction(userId) {
+    this.usedExtraAction.add(userId);
+  }
+
+  addHeldItem(userId, type) {
+    if (!this.heldItems.has(userId)) this.heldItems.set(userId, []);
+    this.heldItems.get(userId).push({ type, used: false });
+  }
+
+  getHeldItems(userId) {
+    return this.heldItems.get(userId) || [];
+  }
+
+  hasUnusedItem(userId, type) {
+    return this.getHeldItems(userId).some(i => i.type === type && !i.used);
+  }
+
+  useItem(userId, type) {
+    const items = this.getHeldItems(userId);
+    const item = items.find(i => i.type === type && !i.used);
+    if (item) { item.used = true; return true; }
+    return false;
+  }
+
+  tryExpel(userId, expelled = false) {
+    if (this.boxMode && this.hasUnusedItem(userId, 'clover')) {
+      this.useItem(userId, 'clover');
+      return { blocked: true };
+    }
+    this.sendToIsland(userId, expelled);
+    return { blocked: false };
+  }
+
+  checkAlbatrossAtShip(shipKey) {
+    if (!shipKey || shipKey === 'island') return { triggered: false, affected: [] };
+    const crew = this.locations[shipKey].crew;
+    const holders = crew.filter(id => this.hasUnusedItem(id, 'albatross'));
+    if (holders.length < 2) return { triggered: false, affected: [] };
+
+    // Consume all albatrosses
+    for (const id of holders) {
+      const items = this.getHeldItems(id);
+      for (const item of items) {
+        if (item.type === 'albatross' && !item.used) item.used = true;
+      }
+    }
+    // Send all crew to island
+    const allCrew = [...crew];
+    for (const id of allCrew) {
+      this.removeFromLocation(id);
+      this.locations.island.residents.push(id);
+      this.players.get(id).location = 'island';
+    }
+    return { triggered: true, affected: allCrew };
+  }
+
+  getNonEmptyBoxes() {
+    return this.boxes
+      .map((b, i) => ({ index: i, content: b.content }))
+      .filter(b => b.content !== null);
+  }
+
+  // Helper: get effective votes accounting for El Dorado and Pirate Code
+  _getEffectiveVotes(voteMap) {
+    const votes = [];
+    for (const [, v] of voteMap) {
+      const vote = typeof v === 'object' ? v.vote : v;
+      const nullified = typeof v === 'object' && v.nullified;
+      const double = typeof v === 'object' && v.doubleVote;
+      if (!nullified) {
+        votes.push(vote);
+        if (double) votes.push(vote);
+      }
+    }
+    return votes;
+  }
+
   shouldGameEnd() {
     if (this.armadaCalled) return true;
     if (this.round >= 10) return true;
@@ -500,4 +656,4 @@ function shuffle(arr) {
   return arr;
 }
 
-module.exports = { GameState };
+module.exports = { GameState, shuffle };

@@ -1,6 +1,7 @@
 const { Markup } = require('telegraf');
 const { getGame, createGame, findGameByPlayer, deleteGame } = require('./game');
 const { msg, SHIP_SHORT, shipLabel, LOCATION_NAMES, TEAM_NAMES } = require('./messages');
+const { shuffle } = require('./state');
 
 // Lazy require to avoid circular dependency
 let _votes;
@@ -21,6 +22,7 @@ async function sendDM(ctx, userId, text, extra) {
 // Check if day should end after an action, and trigger night if so
 async function checkDayEnd(ctx, game) {
   if (game.phase !== 'day') return;
+  if (game.boxMode && game.pendingBoxEffect) return;
   if (!game.allPlayersDone()) return;
   await getVotes().endDay(ctx, game);
 }
@@ -38,8 +40,10 @@ async function newGame(ctx) {
   createGame(chatId);
 
   const keyboard = Markup.inlineKeyboard([
-    Markup.button.callback('عادی', 'newgame_normal'),
-    Markup.button.callback('🌫️ مه‌آلود', 'newgame_mist'),
+    [Markup.button.callback('عادی', 'newgame_normal')],
+    [Markup.button.callback('🌫️ مه‌آلود', 'newgame_mist')],
+    [Markup.button.callback('📦 صندوق', 'newgame_box')],
+    [Markup.button.callback('🌫️📦 مه‌آلود + صندوق', 'newgame_mistbox')],
   ]);
   return ctx.reply(msg.newGameMode, keyboard);
 }
@@ -72,7 +76,7 @@ async function startGame(ctx) {
   const game = getGame(ctx.chat.id);
   if (!game) return ctx.reply(msg.noGame);
   if (game.phase !== 'lobby') return ctx.reply(msg.gameNotLobby);
-  if (game.lobbyPlayers.length < 4) return ctx.reply(msg.needMorePlayers);
+  if (game.lobbyPlayers.length < 2) return ctx.reply(msg.needMorePlayers);
 
   const { fdCaptain, jrCaptain } = game.startGame();
 
@@ -217,6 +221,11 @@ async function attack(ctx) {
   const ship = game.getPlayerShip(userId);
   if (!ship) return ctx.reply(msg.notOnShip);
   if (!game.isCaptain(userId)) return ctx.reply(msg.notCaptain);
+
+  // Black Powder blocks attacks permanently
+  if (game.boxMode && game.blackPowderShips.has(ship)) {
+    return ctx.reply(msg.attackBlockedByBlackPowder);
+  }
 
   // Check for existing attack/maroon on this ship (captain can only do one)
   if (game.pendingEvents.some((e) => (e.type === 'attack' || e.type === 'maroon') && e.ship === ship)) {
@@ -583,17 +592,519 @@ async function handleNewgameModeCallback(ctx) {
   }
 
   if (data === 'newgame_normal') {
-    game.mistMode = false;
+    game.mistMode = false; game.boxMode = false;
   } else if (data === 'newgame_mist') {
-    game.mistMode = true;
+    game.mistMode = true; game.boxMode = false;
+  } else if (data === 'newgame_box') {
+    game.mistMode = false; game.boxMode = true;
+  } else if (data === 'newgame_mistbox') {
+    game.mistMode = true; game.boxMode = true;
   }
 
   await ctx.answerCbQuery('✅');
-  await ctx.editMessageText(msg.newGame(game.mistMode), { parse_mode: 'Markdown' });
+  await ctx.editMessageText(msg.newGame(game.mistMode, game.boxMode), { parse_mode: 'Markdown' });
+}
+
+// --- Box mode ---
+
+function boxGuard(ctx) {
+  const game = getGame(ctx.chat.id);
+  if (!game) { ctx.reply(msg.noGame); return null; }
+  if (!game.boxMode) { ctx.reply(msg.boxModeNotActive); return null; }
+  if (game.phase !== 'day') { ctx.reply(msg.gameNotDay); return null; }
+  const userId = ctx.from.id;
+  const p = game.players.get(userId);
+  if (!p) { ctx.reply(msg.notInGame); return null; }
+  if (game.scurvyActive.has(userId)) { ctx.reply(msg.scurvyBlocked); return null; }
+  if (game.usedExtraAction.has(userId)) { ctx.reply(msg.alreadyUsedExtraAction); return null; }
+  return { game, userId, p };
+}
+
+async function lookBox(ctx) {
+  const guard = boxGuard(ctx);
+  if (!guard) return;
+  const { game, userId } = guard;
+  const nonEmpty = game.getNonEmptyBoxes();
+  if (nonEmpty.length === 0) return ctx.reply(msg.noNonEmptyBoxes);
+  const buttons = nonEmpty.map(b =>
+    Markup.button.callback(msg.boxLabel(b.index), `box_look_${userId}_${b.index}`)
+  );
+  return ctx.reply(msg.chooseBoxToLook, Markup.inlineKeyboard(buttons, { columns: 3 }));
+}
+
+async function openBox(ctx) {
+  const guard = boxGuard(ctx);
+  if (!guard) return;
+  const { game, userId } = guard;
+  const nonEmpty = game.getNonEmptyBoxes();
+  if (nonEmpty.length === 0) return ctx.reply(msg.noNonEmptyBoxes);
+  const buttons = nonEmpty.map(b =>
+    Markup.button.callback(msg.boxLabel(b.index), `box_open_${userId}_${b.index}`)
+  );
+  return ctx.reply(msg.chooseBoxToOpen, Markup.inlineKeyboard(buttons, { columns: 3 }));
+}
+
+async function giftBox(ctx) {
+  const guard = boxGuard(ctx);
+  if (!guard) return;
+  const { game, userId } = guard;
+  const buttons = [];
+  for (const [id, pl] of game.players) {
+    if (id !== userId) buttons.push(Markup.button.callback(pl.name, `box_giftplayer_${userId}_${id}`));
+  }
+  if (buttons.length === 0) return ctx.reply('⚠️');
+  return ctx.reply(msg.chooseGiftTarget, Markup.inlineKeyboard(buttons, { columns: 2 }));
+}
+
+async function handleBoxCallback(ctx) {
+  const data = ctx.callbackQuery.data;
+  const parts = data.split('_');
+  // box_{subtype}_{ownerId}_{...params}
+  const subtype = parts[1];
+  const ownerId = parseInt(parts[2]);
+  const userId = ctx.from.id;
+
+  // For "effect" callbacks the owner might be the target (gift), so handle separately
+  if (subtype === 'effect') {
+    return handleBoxEffectCallback(ctx, parts);
+  }
+
+  if (userId !== ownerId) return ctx.answerCbQuery(msg.notYourButton);
+
+  const game = findGameByPlayer(userId);
+  if (!game) return ctx.answerCbQuery('⚠️');
+
+  const p = game.players.get(userId);
+  const chatId = game.chatId;
+
+  if (subtype === 'look') {
+    const boxIndex = parseInt(parts[3]);
+    if (game.usedExtraAction.has(userId)) return ctx.answerCbQuery(msg.alreadyUsedExtraAction);
+    const content = game.peekBox(userId, boxIndex);
+    if (!content) return ctx.answerCbQuery(msg.noNonEmptyBoxes);
+
+    game.markExtraAction(userId);
+    await ctx.answerCbQuery('✅');
+    await ctx.deleteMessage();
+    await sendDM(ctx, userId, msg.boxPeeked(content, boxIndex));
+    await ctx.telegram.sendMessage(chatId, msg.boxPeekedPublic(p.name, boxIndex));
+
+  } else if (subtype === 'open') {
+    const boxIndex = parseInt(parts[3]);
+    if (game.usedExtraAction.has(userId)) return ctx.answerCbQuery(msg.alreadyUsedExtraAction);
+    const item = game.openBox(boxIndex);
+    if (!item) return ctx.answerCbQuery(msg.noNonEmptyBoxes);
+
+    game.markExtraAction(userId);
+    await ctx.answerCbQuery('✅');
+    await ctx.deleteMessage();
+    await ctx.telegram.sendMessage(chatId, msg.boxOpened(p.name, item, boxIndex));
+    await applyBoxEffect(ctx, game, item, userId, userId);
+
+  } else if (subtype === 'giftplayer') {
+    const targetId = parseInt(parts[3]);
+    if (game.usedExtraAction.has(userId)) return ctx.answerCbQuery(msg.alreadyUsedExtraAction);
+
+    const nonEmpty = game.getNonEmptyBoxes();
+    if (nonEmpty.length === 0) return ctx.answerCbQuery(msg.noNonEmptyBoxes);
+
+    const target = game.players.get(targetId);
+    if (!target) return ctx.answerCbQuery('⚠️');
+
+    await ctx.answerCbQuery('✅');
+    await ctx.deleteMessage();
+    const buttons = nonEmpty.map(b =>
+      Markup.button.callback(msg.boxLabel(b.index), `box_giftbox_${userId}_${targetId}_${b.index}`)
+    );
+    await ctx.telegram.sendMessage(chatId, msg.chooseGiftBox(target.name), Markup.inlineKeyboard(buttons, { columns: 3 }));
+
+  } else if (subtype === 'giftbox') {
+    const targetId = parseInt(parts[3]);
+    const boxIndex = parseInt(parts[4]);
+    if (game.usedExtraAction.has(userId)) return ctx.answerCbQuery(msg.alreadyUsedExtraAction);
+
+    const item = game.openBox(boxIndex);
+    if (!item) return ctx.answerCbQuery(msg.noNonEmptyBoxes);
+
+    const target = game.players.get(targetId);
+    if (!target) return ctx.answerCbQuery('⚠️');
+
+    game.markExtraAction(userId);
+    await ctx.answerCbQuery('✅');
+    await ctx.deleteMessage();
+    await ctx.telegram.sendMessage(chatId, msg.boxGifted(p.name, target.name, item, boxIndex));
+    await applyBoxEffect(ctx, game, item, targetId, userId);
+
+  } else if (subtype === 'crowspeek') {
+    // Crow's Nest free peek
+    const boxIndex = parseInt(parts[3]);
+    const content = game.peekBox(userId, boxIndex);
+    if (!content) return ctx.answerCbQuery(msg.noNonEmptyBoxes);
+    await ctx.answerCbQuery('✅');
+    await ctx.deleteMessage();
+    await sendDM(ctx, userId, msg.boxPeeked(content));
+    await ctx.telegram.sendMessage(chatId, msg.boxPeekedPublic(p.name, boxIndex));
+  }
+}
+
+// Apply box effect. targetId = who the effect applies to. actorId = who opened/gifted.
+async function applyBoxEffect(ctx, game, item, targetId, actorId) {
+  const chatId = game.chatId;
+  const target = game.players.get(targetId);
+  const targetName = target?.name || '?';
+  const isGift = targetId !== actorId;
+
+  switch (item) {
+    case 'blackspot': {
+      const result = game.tryExpel(targetId, false);
+      if (result.blocked) {
+        await ctx.telegram.sendMessage(chatId, msg.cloverUsed(targetName));
+      } else {
+        await ctx.telegram.sendMessage(chatId, msg.blackSpotApplied(targetName));
+      }
+      break;
+    }
+    case 'albatross': {
+      game.addHeldItem(targetId, 'albatross');
+      await ctx.telegram.sendMessage(chatId, msg.albatrossReceived(targetName));
+      const ship = game.getPlayerShip(targetId);
+      if (ship) {
+        const result = game.checkAlbatrossAtShip(ship);
+        if (result.triggered) {
+          await ctx.telegram.sendMessage(chatId, msg.albatrossTriggered(ship));
+        }
+      }
+      break;
+    }
+    case 'eldorado': {
+      game.addHeldItem(targetId, 'eldorado');
+      await ctx.telegram.sendMessage(chatId, msg.eldoradoReceived(targetName));
+      break;
+    }
+    case 'clover': {
+      game.addHeldItem(targetId, 'clover');
+      await ctx.telegram.sendMessage(chatId, msg.cloverReceived(targetName));
+      break;
+    }
+    case 'atlantis': {
+      const ship = game.getPlayerShip(targetId);
+      if (!ship) {
+        await ctx.telegram.sendMessage(chatId, msg.atlantisNoEffect);
+        break;
+      }
+      const otherShip = ship === 'flyingDutchman' ? 'jollyRoger' : 'flyingDutchman';
+      if (game.locations[otherShip].crew.length >= 5) {
+        await ctx.telegram.sendMessage(chatId, msg.atlantisShipFull);
+        break;
+      }
+      game.removeFromLocation(targetId);
+      game.locations[otherShip].crew.push(targetId);
+      target.location = otherShip;
+      await ctx.telegram.sendMessage(chatId, msg.atlantisApplied(targetName, otherShip));
+      const albResult = game.checkAlbatrossAtShip(otherShip);
+      if (albResult.triggered) {
+        await ctx.telegram.sendMessage(chatId, msg.albatrossTriggered(otherShip));
+      }
+      break;
+    }
+    case 'eightbells': {
+      const loc = target.location;
+      if (loc === 'flyingDutchman' || loc === 'jollyRoger') {
+        shuffle(game.locations[loc].crew);
+      } else if (loc === 'island') {
+        shuffle(game.locations.island.residents);
+      }
+      await ctx.telegram.sendMessage(chatId, msg.eightBellsApplied(targetName, loc));
+      break;
+    }
+    case 'piratecode': {
+      game.pirateCodeVotes.set(targetId, 2);
+      await ctx.telegram.sendMessage(chatId, msg.pirateCodeApplied(targetName));
+      break;
+    }
+    case 'scurvy': {
+      const loc = target.location;
+      const members = (loc === 'island')
+        ? game.locations.island.residents
+        : (game.locations[loc]?.crew || []);
+      for (const id of members) game.scurvyNextRound.add(id);
+      await ctx.telegram.sendMessage(chatId, msg.scurvyApplied(targetName, loc));
+      break;
+    }
+    case 'stormysea': {
+      const ship = game.getPlayerShip(targetId);
+      if (ship) {
+        const holds = game.locations[ship].holds;
+        let returned = 0;
+        for (let r = 0; r < 2; r++) {
+          if (holds.english === 0 && holds.french === 0) break;
+          if (holds.english >= holds.french) { holds.english--; }
+          else { holds.french--; }
+          game.locations.spanishShip.treasures++;
+          returned++;
+        }
+        await ctx.telegram.sendMessage(chatId, msg.stormySeaShip(ship, returned));
+      } else if (target.location === 'island') {
+        game.locations.island.treasures = { english: 1, french: 1 };
+        await ctx.telegram.sendMessage(chatId, msg.stormySeaIsland);
+      }
+      break;
+    }
+    case 'crowsnest': {
+      // Free peek - the person who gets the effect (target) picks a box
+      await ctx.telegram.sendMessage(chatId, msg.crowsNestApplied(targetName));
+      const nonEmpty = game.getNonEmptyBoxes();
+      if (nonEmpty.length > 0) {
+        const buttons = nonEmpty.map(b =>
+          Markup.button.callback(msg.boxLabel(b.index), `box_crowspeek_${targetId}_${b.index}`)
+        );
+        await sendDM(ctx, targetId, msg.crowsNestChooseBox, Markup.inlineKeyboard(buttons, { columns: 3 }));
+      }
+      break;
+    }
+    // --- Multi-step effects: show choices to the appropriate person ---
+    case 'boat': {
+      // Actor (or target if gift) chooses island resident, then ship
+      const chooser = isGift ? targetId : actorId;
+      const residents = game.locations.island.residents.filter(id => id !== chooser);
+      if (residents.length === 0) {
+        await ctx.telegram.sendMessage(chatId, msg.boatNoTarget);
+        break;
+      }
+      const buttons = residents.map(id => {
+        const pl = game.players.get(id);
+        return Markup.button.callback(pl.name, `box_effect_${chooser}_boat_${id}`);
+      });
+      game.pendingBoxEffect = { type: 'boat', chooserId: chooser, step: 'resident' };
+      if (isGift) {
+        await sendDM(ctx, chooser, msg.boatChooseResident, Markup.inlineKeyboard(buttons, { columns: 2 }));
+      } else {
+        await ctx.telegram.sendMessage(chatId, msg.boatChooseResident, Markup.inlineKeyboard(buttons, { columns: 2 }));
+      }
+      break;
+    }
+    case 'pistol': {
+      const chooser = isGift ? targetId : actorId;
+      const allCrew = [
+        ...game.locations.flyingDutchman.crew,
+        ...game.locations.jollyRoger.crew,
+      ].filter(id => id !== chooser);
+      if (allCrew.length === 0) {
+        await ctx.telegram.sendMessage(chatId, msg.pistolNoTarget);
+        break;
+      }
+      const buttons = allCrew.map(id => {
+        const pl = game.players.get(id);
+        const ship = game.getPlayerShip(id);
+        return Markup.button.callback(`${pl.name} (${shipLabel(ship)})`, `box_effect_${chooser}_pistol_${id}`);
+      });
+      game.pendingBoxEffect = { type: 'pistol', chooserId: chooser };
+      if (isGift) {
+        await sendDM(ctx, chooser, msg.pistolChooseCrew, Markup.inlineKeyboard(buttons, { columns: 1 }));
+      } else {
+        await ctx.telegram.sendMessage(chatId, msg.pistolChooseCrew, Markup.inlineKeyboard(buttons, { columns: 1 }));
+      }
+      break;
+    }
+    case 'blackpowder': {
+      const chooser = isGift ? targetId : actorId;
+      const buttons = [
+        Markup.button.callback(LOCATION_NAMES.flyingDutchman, `box_effect_${chooser}_blackpowder_fd`),
+        Markup.button.callback(LOCATION_NAMES.jollyRoger, `box_effect_${chooser}_blackpowder_jr`),
+      ];
+      game.pendingBoxEffect = { type: 'blackpowder', chooserId: chooser };
+      if (isGift) {
+        await sendDM(ctx, chooser, msg.blackPowderChooseShip, Markup.inlineKeyboard(buttons, { columns: 1 }));
+      } else {
+        await ctx.telegram.sendMessage(chatId, msg.blackPowderChooseShip, Markup.inlineKeyboard(buttons, { columns: 1 }));
+      }
+      break;
+    }
+    case 'shipfever': {
+      const chooser = isGift ? targetId : actorId;
+      const buttons = [];
+      for (const [id, pl] of game.players) {
+        if (id !== chooser) buttons.push(Markup.button.callback(pl.name, `box_effect_${chooser}_shipfever_${id}`));
+      }
+      game.pendingBoxEffect = { type: 'shipfever', chooserId: chooser };
+      if (isGift) {
+        await sendDM(ctx, chooser, msg.shipFeverChoosePlayer, Markup.inlineKeyboard(buttons, { columns: 2 }));
+      } else {
+        await ctx.telegram.sendMessage(chatId, msg.shipFeverChoosePlayer, Markup.inlineKeyboard(buttons, { columns: 2 }));
+      }
+      break;
+    }
+    case 'mask': {
+      const loc = target.location;
+      const list = (loc === 'island')
+        ? game.locations.island.residents
+        : (game.locations[loc]?.crew || []);
+      const idx = list.indexOf(targetId);
+      const adjacent = [];
+      if (idx > 0) adjacent.push(list[idx - 1]);
+      if (idx < list.length - 1) adjacent.push(list[idx + 1]);
+      if (adjacent.length === 0) {
+        await ctx.telegram.sendMessage(chatId, msg.maskNoTarget);
+        break;
+      }
+      const chooser = isGift ? targetId : actorId;
+      const buttons = adjacent.map(id => {
+        const pl = game.players.get(id);
+        return Markup.button.callback(pl.name, `box_effect_${chooser}_mask_${id}`);
+      });
+      game.pendingBoxEffect = { type: 'mask', chooserId: chooser, targetId };
+      if (isGift) {
+        await sendDM(ctx, chooser, msg.maskChooseTarget, Markup.inlineKeyboard(buttons, { columns: 1 }));
+      } else {
+        await ctx.telegram.sendMessage(chatId, msg.maskChooseTarget, Markup.inlineKeyboard(buttons, { columns: 1 }));
+      }
+      break;
+    }
+  }
+}
+
+// Handle follow-up callbacks for multi-step box effects
+async function handleBoxEffectCallback(ctx, parts) {
+  // box_effect_{chooserId}_{effectType}_{value}
+  const chooserId = parseInt(parts[2]);
+  const effectType = parts[3];
+  const value = parts[4];
+  const userId = ctx.from.id;
+
+  if (userId !== chooserId) return ctx.answerCbQuery(msg.notYourButton);
+
+  const game = findGameByPlayer(userId);
+  if (!game) return ctx.answerCbQuery('⚠️');
+  if (!game.pendingBoxEffect || game.pendingBoxEffect.chooserId !== chooserId) {
+    return ctx.answerCbQuery('⚠️');
+  }
+
+  const chatId = game.chatId;
+  const pending = game.pendingBoxEffect;
+
+  await ctx.answerCbQuery('✅');
+  try { await ctx.deleteMessage(); } catch {}
+
+  if (effectType === 'boat' && pending.step === 'resident') {
+    // Step 2: choose ship
+    const residentId = parseInt(value);
+    const buttons = [];
+    if (game.locations.flyingDutchman.crew.length < 5)
+      buttons.push(Markup.button.callback(LOCATION_NAMES.flyingDutchman, `box_effect_${chooserId}_boatship_${residentId}_fd`));
+    if (game.locations.jollyRoger.crew.length < 5)
+      buttons.push(Markup.button.callback(LOCATION_NAMES.jollyRoger, `box_effect_${chooserId}_boatship_${residentId}_jr`));
+    if (buttons.length === 0) {
+      await ctx.telegram.sendMessage(chatId, msg.boatNoTarget);
+      game.pendingBoxEffect = null;
+      await checkDayEnd(ctx, game);
+      return;
+    }
+    game.pendingBoxEffect = { ...pending, step: 'ship', residentId };
+    // Send to same channel as the first step was shown
+    if (pending.chooserId !== userId) {
+      await sendDM(ctx, chooserId, msg.boatChooseShip, Markup.inlineKeyboard(buttons, { columns: 1 }));
+    } else {
+      await ctx.telegram.sendMessage(chatId, msg.boatChooseShip, Markup.inlineKeyboard(buttons, { columns: 1 }));
+    }
+    return;
+  }
+
+  if (effectType === 'boatship') {
+    const residentId = parseInt(value);
+    const shipShort = parts[5];
+    const ship = SHIP_SHORT[shipShort];
+    if (!ship || game.locations[ship].crew.length >= 5) {
+      game.pendingBoxEffect = null;
+      await checkDayEnd(ctx, game);
+      return;
+    }
+    const resident = game.players.get(residentId);
+    if (resident && resident.location === 'island') {
+      game.removeFromLocation(residentId);
+      game.locations[ship].crew.push(residentId);
+      resident.location = ship;
+      await ctx.telegram.sendMessage(chatId, msg.boatApplied(resident.name, ship));
+      const albResult = game.checkAlbatrossAtShip(ship);
+      if (albResult.triggered) {
+        await ctx.telegram.sendMessage(chatId, msg.albatrossTriggered(ship));
+      }
+    }
+    game.pendingBoxEffect = null;
+    await checkDayEnd(ctx, game);
+    return;
+  }
+
+  if (effectType === 'pistol') {
+    const victimId = parseInt(value);
+    const victim = game.players.get(victimId);
+    if (victim && game.getPlayerShip(victimId)) {
+      const result = game.tryExpel(victimId, true);
+      if (result.blocked) {
+        await ctx.telegram.sendMessage(chatId, msg.cloverUsed(victim.name));
+      } else {
+        await ctx.telegram.sendMessage(chatId, msg.pistolApplied(victim.name));
+      }
+    }
+    game.pendingBoxEffect = null;
+    await checkDayEnd(ctx, game);
+    return;
+  }
+
+  if (effectType === 'blackpowder') {
+    const ship = SHIP_SHORT[value];
+    if (ship) {
+      game.blackPowderShips.add(ship);
+      await ctx.telegram.sendMessage(chatId, msg.blackPowderApplied(ship));
+    }
+    game.pendingBoxEffect = null;
+    await checkDayEnd(ctx, game);
+    return;
+  }
+
+  if (effectType === 'shipfever') {
+    const otherId = parseInt(value);
+    const chooser = game.players.get(chooserId);
+    const other = game.players.get(otherId);
+    if (chooser && other) {
+      if (!chooser.originalTeam) chooser.originalTeam = chooser.team;
+      if (!other.originalTeam) other.originalTeam = other.team;
+      const temp = chooser.team;
+      chooser.team = other.team;
+      other.team = temp;
+      await sendDM(ctx, chooserId, msg.shipFeverDM(chooser.team));
+      await sendDM(ctx, otherId, msg.shipFeverDM(other.team));
+      await ctx.telegram.sendMessage(chatId, msg.shipFeverApplied);
+    }
+    game.pendingBoxEffect = null;
+    await checkDayEnd(ctx, game);
+    return;
+  }
+
+  if (effectType === 'mask') {
+    const swapWithId = parseInt(value);
+    const maskTarget = game.players.get(pending.targetId || chooserId);
+    const swapWith = game.players.get(swapWithId);
+    if (maskTarget && swapWith && maskTarget.location === swapWith.location) {
+      const loc = maskTarget.location;
+      const list = (loc === 'island')
+        ? game.locations.island.residents
+        : (game.locations[loc]?.crew || []);
+      const i1 = list.indexOf(pending.targetId || chooserId);
+      const i2 = list.indexOf(swapWithId);
+      if (i1 !== -1 && i2 !== -1) {
+        [list[i1], list[i2]] = [list[i2], list[i1]];
+        await ctx.telegram.sendMessage(chatId, msg.maskApplied(maskTarget.name, swapWith.name));
+      }
+    }
+    game.pendingBoxEffect = null;
+    await checkDayEnd(ctx, game);
+    return;
+  }
 }
 
 module.exports = {
   newGame, join, startGame, moveLocation, attack, maroon,
   mutiny, inspect, moveTreasure, callArmada, dispute, pass, status, sendDM,
-  handleActionCallback, handleNewgameModeCallback, checkDayEnd, leave, endGame, listPlayers, sendHelp,
+  handleActionCallback, handleNewgameModeCallback, handleBoxCallback, lookBox, openBox, giftBox,
+  checkDayEnd, leave, endGame, listPlayers, sendHelp,
 };

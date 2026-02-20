@@ -58,6 +58,13 @@ async function resolveDayEndActions(ctx, game) {
       game.locations[m.dest].crew.push(m.userId);
       p.location = m.dest;
       await ctx.telegram.sendMessage(chatId, msg.movedTo(m.name, m.dest));
+      // Box mode: albatross check after joining a ship
+      if (game.boxMode) {
+        const albResult = game.checkAlbatrossAtShip(m.dest);
+        if (albResult.triggered) {
+          await ctx.telegram.sendMessage(chatId, msg.albatrossTriggered(m.dest));
+        }
+      }
     }
   }
 
@@ -265,7 +272,11 @@ async function resolveAllEvents(ctx, game) {
     );
 
     if (result.success) {
-      mutinySucceeded.add(ev.ship);
+      if (result.cloverBlocked) {
+        await ctx.telegram.sendMessage(chatId, msg.cloverUsed(game.players.get(game.locations[ev.ship].crew[0])?.name || '?'));
+      } else {
+        mutinySucceeded.add(ev.ship);
+      }
     }
   }
 
@@ -310,10 +321,14 @@ async function resolveAllEvents(ctx, game) {
         }
       }
     } else if (ev.type === 'maroon') {
-      // Execute maroon: send target to island
+      // Execute maroon: send target to island (clover can block)
       const target = game.players.get(ev.targetId);
       if (target) {
-        game.sendToIsland(ev.targetId, true); // Mark as expelled
+        const result = game.tryExpel(ev.targetId, true);
+        if (result.blocked) {
+          await ctx.telegram.sendMessage(chatId, msg.cloverUsed(target.name));
+          continue;
+        }
         const initiatorName = game.players.get(ev.initiator)?.name || '?';
         await ctx.telegram.sendMessage(chatId, msg.maroonPlayer(initiatorName, target.name, ev.ship));
       }
@@ -476,7 +491,11 @@ async function handleLootCallback(ctx) {
     } else if (ev.type === 'maroon') {
       const target = game.players.get(ev.targetId);
       if (target) {
-        game.sendToIsland(ev.targetId, true);
+        const result = game.tryExpel(ev.targetId, true);
+        if (result.blocked) {
+          await ctx.telegram.sendMessage(chatId, msg.cloverUsed(target.name));
+          continue;
+        }
         const initiatorName = game.players.get(ev.initiator)?.name || '?';
         await ctx.telegram.sendMessage(chatId, msg.maroonPlayer(initiatorName, target.name, ev.ship));
       }
@@ -492,6 +511,9 @@ async function advanceRound(ctx, game) {
     return endGame(ctx, game);
   }
   game.round++;
+  if (game.boxMode) {
+    game.refillBoxes();
+  }
   game.startDay();
   await sendDayStart(ctx, game);
 }
@@ -530,7 +552,7 @@ async function sendDayStart(ctx, game) {
     );
     await ctx.telegram.sendMessage(
       game.chatId,
-      msg.dayStart(game.round, game.mistMode),
+      msg.dayStart(game.round, game.mistMode, game.boxMode),
       { parse_mode: 'Markdown' }
     );
     try {
@@ -545,7 +567,7 @@ async function sendDayStart(ctx, game) {
     );
     await ctx.telegram.sendMessage(
       game.chatId,
-      msg.dayStart(game.round, game.mistMode),
+      msg.dayStart(game.round, game.mistMode, game.boxMode),
       { parse_mode: 'Markdown' }
     );
     try {
@@ -606,6 +628,23 @@ async function endGame(ctx, game) {
       await ctx.telegram.sendMessage(
         chatId,
         msg.spanishResult(spanishResult.won, spanishResult.reason)
+      );
+    }
+  }
+
+  // Ship Fever swap reveal
+  if (game.boxMode) {
+    const swaps = [];
+    for (const [, p] of game.players) {
+      if (p.originalTeam && p.originalTeam !== p.team) {
+        swaps.push(msg.teamSwapReveal(p.name, p.originalTeam, p.team));
+      }
+    }
+    if (swaps.length > 0) {
+      await ctx.telegram.sendMessage(
+        chatId,
+        `🤝 *تغییرات تیمی (تب کشتی):*\n${swaps.join('\n')}`,
+        { parse_mode: 'Markdown' }
       );
     }
   }
